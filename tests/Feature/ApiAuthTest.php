@@ -128,3 +128,51 @@ it('records an audit entry when a module is toggled', function () {
         ->and($entry->properties['module'])->toBe('travel')
         ->and($entry->properties['account_id'])->toBe($account->id);
 });
+
+it('creates a user with no roles and an unusable password', function () {
+    ['account' => $account, 'admin' => $admin] = rbacWorld();
+    $actor = makePerson('actor@example.com');
+    UserRoleAssignment::create([
+        'user_id' => $actor->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+    ]);
+
+    $this->actingAs($actor)->postJson('/api/v1/users', [
+        'first_name' => 'Priya', 'last_name' => 'Raman',
+        'email' => 'priya@example.com', 'account_id' => $account->id,
+    ])->assertStatus(201)->assertJsonPath('name', 'Priya Raman');
+
+    $created = User::where('email', 'priya@example.com')->firstOrFail();
+
+    // Existing must not confer access.
+    expect($created->roleAssignments()->count())->toBe(0)
+        // The random secret must not match anything a person could type.
+        ->and(Hash::check('password', $created->password))->toBeFalse()
+        ->and(RbacAudit::query()->where('event', 'user.created')->exists())->toBeTrue();
+});
+
+it('refuses to create a user without the manage permission', function () {
+    ['account' => $account, 'worker' => $worker] = rbacWorld();
+    $user = makePerson('worker@example.com');
+    UserRoleAssignment::create([
+        'user_id' => $user->id, 'role_id' => $worker->id, 'scope_level' => 'account',
+        'account_id' => $account->id, 'valid_from' => now(),
+    ]);
+
+    $this->actingAs($user)->postJson('/api/v1/users', [
+        'first_name' => 'Nope', 'last_name' => 'Nope', 'email' => 'nope@example.com',
+    ])->assertStatus(403);
+
+    expect(User::where('email', 'nope@example.com')->exists())->toBeFalse();
+});
+
+it('rejects a duplicate email', function () {
+    ['admin' => $admin] = rbacWorld();
+    $actor = makePerson('actor@example.com');
+    UserRoleAssignment::create([
+        'user_id' => $actor->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+    ]);
+
+    $this->actingAs($actor)->postJson('/api/v1/users', [
+        'first_name' => 'Dupe', 'last_name' => 'Test', 'email' => 'actor@example.com',
+    ])->assertStatus(422)->assertJsonValidationErrors('email');
+});

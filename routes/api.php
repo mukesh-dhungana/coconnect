@@ -52,6 +52,7 @@ Route::prefix('v1')->group(function () {
             Route::put('accounts/{account}/modules/{module}', [ModuleController::class, 'toggleForAccount']);
             Route::post('roles', [RoleController::class, 'store']);
             Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
+            Route::post('users', [UserController::class, 'store']);
             Route::post('users/{user}/assignments', [AssignmentController::class, 'store']);
             Route::delete('assignments/{assignment}', [AssignmentController::class, 'destroy']);
         });
