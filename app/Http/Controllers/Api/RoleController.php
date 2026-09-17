@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Domain\Rbac\Models\Permission;
 use App\Domain\Rbac\Models\Role;
+use App\Domain\Rbac\Support\RbacAudit;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -41,7 +42,12 @@ class RoleController extends Controller
             return response()->json(['message' => 'A role with that key already exists in this scope.'], 422);
         }
 
-        return response()->json(Role::create($data + ['is_system' => false]), 201);
+        $role = Role::create($data + ['is_system' => false]);
+        RbacAudit::record('role.created', $role, [
+            'role' => $role->name, 'scope_level' => $role->scope_level, 'account_id' => $role->account_id,
+        ]);
+
+        return response()->json($role, 201);
     }
 
     /** Replace a role's permission set. */
@@ -52,8 +58,16 @@ class RoleController extends Controller
             'permissions.*' => ['string', 'exists:permissions,name'],
         ]);
 
+        $before = $role->permissions()->pluck('name')->sort()->values()->all();
         $ids = Permission::whereIn('name', $data['permissions'])->pluck('id')->all();
         $role->permissions()->sync($ids);
+        $after = $role->permissions()->pluck('name')->sort()->values()->all();
+
+        RbacAudit::record('role.permissions_changed', $role, [
+            'role'    => $role->name,
+            'added'   => array_values(array_diff($after, $before)),
+            'removed' => array_values(array_diff($before, $after)),
+        ]);
 
         // Anyone holding this role has a stale cached grant set.
         $role->assignments()->distinct()->pluck('user_id')

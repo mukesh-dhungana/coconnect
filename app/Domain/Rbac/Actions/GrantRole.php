@@ -6,6 +6,7 @@ use App\Domain\Rbac\Models\Role;
 use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Models\UserRoleAssignment;
 use App\Domain\Rbac\Services\PermissionResolver;
+use App\Domain\Rbac\Support\RbacAudit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -43,6 +44,16 @@ class GrantRole
             'valid_from'   => now(),
             'valid_until'  => $validUntil,
         ]));
+
+        RbacAudit::record('role.granted', $assignment, [
+            'user'        => $user->name,
+            'role'        => $role->name,
+            'scope_level' => $role->scope_level,
+            'account_id'  => $accountId,
+            'location_id' => $locationId,
+            'valid_until' => $validUntil,
+            'reason'      => $reason,
+        ]);
 
         $this->resolver->flush($user->id);
 

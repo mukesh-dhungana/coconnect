@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Domain\Identity\Models\Account;
 use App\Domain\Rbac\Models\Module;
+use App\Domain\Rbac\Support\RbacAudit;
 use Illuminate\Http\Request;
 
 class ModuleController extends Controller
@@ -28,7 +29,10 @@ class ModuleController extends Controller
             'sort_order'  => ['nullable', 'integer', 'min:0', 'max:9999'],
         ]);
 
-        return response()->json(Module::create($data), 201);
+        $module = Module::create($data);
+        RbacAudit::record('module.created', $module, ['module' => $module->key, 'name' => $module->name]);
+
+        return response()->json($module, 201);
     }
 
     /** Which modules an account may use, and which are on. */
@@ -68,6 +72,12 @@ class ModuleController extends Controller
         ]);
 
         cache()->forget("rbac:module:{$account->id}:{$module->key}");
+
+        RbacAudit::record($data['is_enabled'] ? 'module.enabled' : 'module.disabled', $module, [
+            'account'    => $account->name,
+            'account_id' => $account->id,
+            'module'     => $module->key,
+        ]);
 
         return response()->json(['module' => $module->key, 'is_enabled' => $data['is_enabled']]);
     }
