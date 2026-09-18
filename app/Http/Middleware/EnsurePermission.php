@@ -16,10 +16,16 @@ use Symfony\Component\HttpFoundation\Response;
  *   Route::middleware('permission:roster.publish')
  *
  * Scope is taken from route parameters {account} / {location} when present,
- * otherwise from ?account_id= / ?location_id= on the request.
+ * then from ?account_id= / ?location_id=, and finally from the account
+ * ResolveTenant put in the TenantContext for this request.
  */
+use App\Support\Http\ApiResponse;
+use App\Support\Tenancy\TenantContext;
+
 class EnsurePermission
 {
+    public function __construct(private TenantContext $tenant) {}
+
     public function handle(Request $request, Closure $next, string $permission): Response
     {
         $user = $request->user();
@@ -50,13 +56,19 @@ class EnsurePermission
         $accountId = is_object($account) ? $account->id : ($account ?? $request->integer('account_id') ?: null);
         $locationId = is_object($location) ? $location->id : ($location ?? $request->integer('location_id') ?: null);
 
+        // Nothing on the request said which account? Use the one ResolveTenant
+        // already settled on. Without this the two middleware disagree: the
+        // request is admitted into an account, then judged as if it had none,
+        // and an account-scoped grant never covers a scope-less check.
+        $accountId ??= $this->tenant->id();
+
         return [$accountId ? (int) $accountId : null, $locationId ? (int) $locationId : null];
     }
 
     private function deny(Request $request, string $message, int $status): Response
     {
         if ($request->expectsJson()) {
-            return response()->json(['message' => $message], $status);
+            return ApiResponse::error($message, $status);
         }
 
         abort($status, $message);

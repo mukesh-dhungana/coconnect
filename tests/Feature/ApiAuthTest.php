@@ -80,8 +80,8 @@ it('returns the signed-in profile with roles and permissions', function () {
 
     $this->actingAs($user)->getJson('/api/v1/me')
         ->assertOk()
-        ->assertJsonPath('user.email', 'admin@example.com')
-        ->assertJsonPath('roles.0.role', 'Administrator')
+        ->assertJsonPath('data.user.email', 'admin@example.com')
+        ->assertJsonPath('data.roles.0.role', 'Administrator')
         ->assertJsonFragment(['system.audit_view']);
 });
 
@@ -139,7 +139,7 @@ it('creates a user with no roles and an unusable password', function () {
     $this->actingAs($actor)->postJson('/api/v1/users', [
         'first_name' => 'Priya', 'last_name' => 'Raman',
         'email' => 'priya@example.com', 'account_id' => $account->id,
-    ])->assertStatus(201)->assertJsonPath('name', 'Priya Raman');
+    ])->assertStatus(201)->assertJsonPath('data.name', 'Priya Raman');
 
     $created = User::where('email', 'priya@example.com')->firstOrFail();
 

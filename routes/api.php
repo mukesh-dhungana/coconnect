@@ -14,9 +14,10 @@ use Illuminate\Support\Facades\Route;
 | Sanctum SPA session auth: the React app calls /sanctum/csrf-cookie, then
 | POST /api/v1/login. No tokens are stored in the browser.
 |
-| Administration is guarded twice: `auth:sanctum` proves who you are, and
-| `permission:<name>` asks the resolver whether you may do it here. The
-| resolver remains the single authority.
+| Administration is guarded three times: `auth:sanctum` proves who you are,
+| `tenant` decides which account the request acts inside (and refuses one you
+| hold no grant in), and `permission:<name>` asks the resolver whether you may
+| do it there. The resolver remains the single authority.
 */
 
 Route::prefix('v1')->group(function () {
@@ -25,7 +26,7 @@ Route::prefix('v1')->group(function () {
     Route::post('login', [AuthController::class, 'login'])->middleware('throttle:6,1');
 
     // ---- Authenticated ---------------------------------------------------
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', 'tenant'])->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
         Route::get('me', [AuthController::class, 'me']);
 

@@ -2,6 +2,7 @@
 
 namespace App\Domain\Rbac\Actions;
 
+use App\Domain\Rbac\Data\GrantRoleData;
 use App\Domain\Rbac\Models\Role;
 use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Models\UserRoleAssignment;
@@ -16,20 +17,22 @@ use Illuminate\Validation\ValidationException;
  * The database enforces scope integrity and duplicate protection, but failing
  * at the constraint gives the user a 500. This validates first so the API can
  * answer properly, and lets the constraint remain the backstop.
+ *
+ * Takes one GrantRoleData rather than seven positional arguments: accountId
+ * and locationId are both nullable ints, and transposing them used to be a
+ * mistake nothing could catch.
  */
 class GrantRole
 {
     public function __construct(private PermissionResolver $resolver) {}
 
-    public function __invoke(
-        User $user,
-        Role $role,
-        ?int $accountId = null,
-        ?int $locationId = null,
-        ?User $grantedBy = null,
-        ?string $reason = null,
-        ?string $validUntil = null,
-    ): UserRoleAssignment {
+    public function __invoke(GrantRoleData $data): UserRoleAssignment
+    {
+        $role       = $data->role;
+        $user       = $data->user;
+        $accountId  = $data->accountId;
+        $locationId = $data->locationId;
+
         $this->assertScopeMatches($role, $accountId, $locationId);
         $this->assertNotDuplicate($user, $role, $accountId, $locationId);
 
@@ -39,10 +42,10 @@ class GrantRole
             'scope_level'  => $role->scope_level,
             'account_id'   => $accountId,
             'location_id'  => $locationId,
-            'granted_by'   => $grantedBy?->id,
-            'grant_reason' => $reason,
+            'granted_by'   => $data->grantedBy?->id,
+            'grant_reason' => $data->reason,
             'valid_from'   => now(),
-            'valid_until'  => $validUntil,
+            'valid_until'  => $data->validUntil,
         ]));
 
         RbacAudit::record('role.granted', $assignment, [
@@ -51,8 +54,8 @@ class GrantRole
             'scope_level' => $role->scope_level,
             'account_id'  => $accountId,
             'location_id' => $locationId,
-            'valid_until' => $validUntil,
-            'reason'      => $reason,
+            'valid_until' => $data->validUntil,
+            'reason'      => $data->reason,
         ]);
 
         $this->resolver->flush($user->id);

@@ -4,19 +4,18 @@ namespace App\Http\Controllers\Api;
 
 use App\Domain\Rbac\Support\RbacAudit;
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\AuditQueryRequest;
+use App\Support\Concerns\RespondsWithJson;
+use Illuminate\Http\JsonResponse;
 
 class AuditController extends Controller
 {
-    /** The access-control ledger: who changed what, when, and why. */
-    public function index(Request $request)
-    {
-        $data = $request->validate([
-            'event'      => ['nullable', 'string'],
-            'account_id' => ['nullable', 'integer'],
-            'per_page'   => ['nullable', 'integer', 'min:1', 'max:100'],
-        ]);
+    use RespondsWithJson;
 
+    /** The access-control ledger: who changed what, when, and why. */
+    public function index(AuditQueryRequest $request): JsonResponse
+    {
+        $data  = $request->validated();
         $query = RbacAudit::query()->with('causer');
 
         if (! empty($data['event'])) {
@@ -29,28 +28,21 @@ class AuditController extends Controller
 
         $page = $query->paginate($data['per_page'] ?? 25);
 
-        return response()->json([
-            'data' => collect($page->items())->map(fn ($a) => [
-                'id'         => $a->id,
-                'event'      => $a->event,
-                'actor'      => $a->causer?->name ?? 'system',
-                'subject'    => class_basename($a->subject_type ?? ''),
-                'subject_id' => $a->subject_id,
-                'properties' => $a->properties,
-                'at'         => $a->created_at?->toIso8601String(),
-            ])->values(),
-            'meta' => [
-                'total'        => $page->total(),
-                'current_page' => $page->currentPage(),
-                'last_page'    => $page->lastPage(),
-            ],
+        return $this->paginated($page, fn ($a) => [
+            'id'         => $a->id,
+            'event'      => $a->event,
+            'actor'      => $a->causer?->name ?? 'system',
+            'subject'    => class_basename($a->subject_type ?? ''),
+            'subject_id' => $a->subject_id,
+            'properties' => $a->properties,
+            'at'         => $a->created_at?->toIso8601String(),
         ]);
     }
 
     /** Distinct event types, for filter dropdowns. */
-    public function events()
+    public function events(): JsonResponse
     {
-        return response()->json(
+        return $this->ok(
             RbacAudit::query()->reorder()->distinct()->pluck('event')->filter()->values()
         );
     }

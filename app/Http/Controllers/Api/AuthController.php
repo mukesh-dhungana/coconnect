@@ -5,22 +5,22 @@ namespace App\Http\Controllers\Api;
 use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Services\PermissionResolver;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\LoginRequest;
+use App\Support\Concerns\RespondsWithJson;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    use RespondsWithJson;
+
     public function __construct(private PermissionResolver $resolver) {}
 
-    public function login(Request $request)
+    public function login(LoginRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'email'    => ['required', 'email'],
-            'password' => ['required', 'string'],
-        ]);
-
-        if (! Auth::attempt($data, $request->boolean('remember'))) {
+        if (! Auth::attempt($request->credentials(), $request->boolean('remember'))) {
             throw ValidationException::withMessages([
                 'email' => 'Those credentials do not match our records.',
             ]);
@@ -28,22 +28,22 @@ class AuthController extends Controller
 
         $request->session()->regenerate();
 
-        return response()->json($this->profile($request->user()));
+        return $this->ok($this->profile($request->user()));
     }
 
-    public function logout(Request $request)
+    public function logout(Request $request): JsonResponse
     {
         Auth::guard('web')->logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
-        return response()->json(['message' => 'Signed out.']);
+        return $this->ok(['message' => 'Signed out.']);
     }
 
     /** Who am I, and what may I do — the payload an SPA boots from. */
-    public function me(Request $request)
+    public function me(Request $request): JsonResponse
     {
-        return response()->json($this->profile($request->user()));
+        return $this->ok($this->profile($request->user()));
     }
 
     private function profile(User $user): array

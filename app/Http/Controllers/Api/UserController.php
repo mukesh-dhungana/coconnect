@@ -2,30 +2,34 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Domain\Identity\Models\{Account, User};
+use App\Domain\Identity\Models\Account;
+use App\Domain\Identity\Models\User;
+use App\Domain\Rbac\Contracts\UserDirectory;
+use App\Domain\Rbac\Data\NewUserData;
+use App\Domain\Rbac\Models\Permission;
 use App\Domain\Rbac\Services\PermissionResolver;
-use App\Http\Controllers\Controller;
 use App\Domain\Rbac\Support\RbacAudit;
+use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreUserRequest;
+use App\Support\Concerns\RespondsWithJson;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 class UserController extends Controller
 {
-    public function __construct(private PermissionResolver $resolver) {}
+    use RespondsWithJson;
+
+    public function __construct(
+        private PermissionResolver $resolver,
+        private UserDirectory $users,
+    ) {}
 
     /** Directory with the roles each person holds — the admin list view. */
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         $accountId = $request->integer('account_id') ?: null;
 
-        $users = User::with([
-            'roleAssignments.role:id,name,scope_level',
-            'roleAssignments.account:id,name',
-            'roleAssignments.location:id,name',
-        ])->orderBy('first_name')->get();
-
-        return response()->json($users->map(fn (User $u) => [
+        return $this->ok($this->users->all()->map(fn (User $u) => [
             'id'    => $u->id,
             'name'  => $u->name,
             'email' => $u->email,
@@ -51,49 +55,26 @@ class UserController extends Controller
      * afterwards, as an explicit, audited act, so nobody acquires permissions
      * merely by existing.
      */
-    public function store(Request $request)
+    public function store(StoreUserRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'first_name' => ['required', 'string', 'max:100'],
-            'last_name'  => ['required', 'string', 'max:100'],
-            'email'      => ['required', 'email', 'max:190', 'unique:users,email'],
-            'mobile'     => ['nullable', 'string', 'max:20', 'unique:users,mobile'],
-            'account_id' => ['nullable', 'exists:accounts,id'],
-        ]);
-
-        $user = User::create([
-            'first_name' => $data['first_name'],
-            'last_name'  => $data['last_name'],
-            'uuid'       => (string) Str::uuid(),
-            'email'      => $data['email'],
-            'mobile'     => $data['mobile'] ?? null,
-            // A random secret: the account is unusable until the person sets
-            // their own password through the invite flow.
-            'password'   => Hash::make(Str::random(32)),
-        ]);
-
-        // Membership is not permission — it only places them in the account.
-        if (! empty($data['account_id'])) {
-            $user->accounts()->attach($data['account_id'], [
-                'type' => 'employee', 'source' => 'admin', 'invited_at' => now(),
-            ]);
-        }
+        $data = NewUserData::fromArray($request->validated());
+        $user = $this->users->create($data);
 
         RbacAudit::record('user.created', $user, [
             'user'       => $user->name,
             'email'      => $user->email,
-            'account_id' => $data['account_id'] ?? null,
+            'account_id' => $data->accountId,
         ]);
 
-        return response()->json([
+        return $this->created([
             'id' => $user->id, 'name' => $user->name, 'email' => $user->email,
-        ], 201);
+        ]);
     }
 
     /** Accounts and their locations — drives the scope pickers. */
-    public function accounts()
+    public function accounts(): JsonResponse
     {
-        return response()->json(
+        return $this->ok(
             Account::with('locations:id,account_id,name')->orderBy('name')->get()
                 ->map(fn ($a) => [
                     'id'        => $a->id,
@@ -104,11 +85,10 @@ class UserController extends Controller
     }
 
     /** Every permission, grouped by module — drives the role editor. */
-    public function permissions()
+    public function permissions(): JsonResponse
     {
-        return response()->json(
-            \App\Domain\Rbac\Models\Permission::with('module:id,key,name')
-                ->orderBy('name')->get()
+        return $this->ok(
+            Permission::with('module:id,key,name')->orderBy('name')->get()
                 ->map(fn ($p) => [
                     'name'         => $p->name,
                     'module'       => $p->module->key,

@@ -1,6 +1,7 @@
 <?php
 
 use App\Domain\Rbac\Actions\GrantRole;
+use App\Domain\Rbac\Data\GrantRoleData;
 use App\Domain\Rbac\Actions\RevokeRole;
 use App\Domain\Identity\Models\{Account, Location, User};
 use App\Domain\Rbac\Models\{Module, Permission, Role, UserRoleAssignment};
@@ -47,11 +48,21 @@ function roleWith(string $scope, Permission $perm, ?string $key = null): Role
     return $role;
 }
 
+/** Builds the DTO so the call sites stay short. */
+function grant(User $user, Role $role, ?int $accountId = null, ?int $locationId = null,
+               ?string $validUntil = null): UserRoleAssignment
+{
+    return app(GrantRole::class)(new GrantRoleData(
+        user: $user, role: $role, accountId: $accountId,
+        locationId: $locationId, validUntil: $validUntil,
+    ));
+}
+
 it('grants a global role across every account', function () {
     ['perm' => $perm, 'account' => $account, 'other' => $other] = scenario();
     $user = makeUser('Glenda Global');
 
-    app(GrantRole::class)($user, roleWith('global', $perm));
+    grant($user, roleWith('global', $perm));
 
     expect($user->hasPermission('roster.publish', $account->id))->toBeTrue()
         ->and($user->hasPermission('roster.publish', $other->id))->toBeTrue();
@@ -61,7 +72,7 @@ it('confines an account role to its own account', function () {
     ['perm' => $perm, 'account' => $account, 'other' => $other] = scenario();
     $user = makeUser('Alan Account');
 
-    app(GrantRole::class)($user, roleWith('account', $perm), $account->id);
+    grant($user, roleWith('account', $perm), $account->id);
 
     expect($user->hasPermission('roster.publish', $account->id))->toBeTrue()
         ->and($user->hasPermission('roster.publish', $other->id))->toBeFalse();
@@ -71,7 +82,7 @@ it('confines a location role to its own location', function () {
     ['perm' => $perm, 'account' => $account, 'location' => $loc, 'location2' => $loc2] = scenario();
     $user = makeUser('Lara Location');
 
-    app(GrantRole::class)($user, roleWith('location', $perm), $account->id, $loc->id);
+    grant($user, roleWith('location', $perm), $account->id, $loc->id);
 
     expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue()
         ->and($user->hasPermission('roster.publish', $account->id, $loc2->id))->toBeFalse();
@@ -81,7 +92,7 @@ it('denies everything when the module is disabled for that account', function ()
     ['module' => $module, 'perm' => $perm, 'account' => $account] = scenario();
     $user = makeUser('Glenda Global');
 
-    app(GrantRole::class)($user, roleWith('global', $perm));
+    grant($user, roleWith('global', $perm));
     expect($user->hasPermission('roster.publish', $account->id))->toBeTrue();
 
     // Commercial boundary: the client has not bought this module.
@@ -101,8 +112,8 @@ it('unions permissions across several roles held at once', function () {
     $roleB->permissions()->attach($second->id);
 
     $user = makeUser('Multi Role');
-    app(GrantRole::class)($user, $roleA, $account->id, $loc->id);
-    app(GrantRole::class)($user, $roleB, $account->id, $loc->id);
+    grant($user, $roleA, $account->id, $loc->id);
+    grant($user, $roleB, $account->id, $loc->id);
 
     expect($user->roleAssignments()->active()->count())->toBe(2)
         ->and($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue()
@@ -113,11 +124,8 @@ it('drops a temporary grant once it expires', function () {
     ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
     $user = makeUser('Temp Elevated');
 
-    app(GrantRole::class)(
-        user: $user, role: roleWith('location', $perm),
-        accountId: $account->id, locationId: $loc->id,
-        validUntil: now()->addHour()->toDateTimeString(),
-    );
+    grant($user, roleWith('location', $perm), $account->id, $loc->id,
+        validUntil: now()->addHour()->toDateTimeString());
     expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue();
 
     $this->travel(2)->hours();
@@ -131,20 +139,20 @@ it('rejects a duplicate grant at the same scope', function () {
     $user = makeUser('Dupe Test');
     $role = roleWith('location', $perm);
 
-    app(GrantRole::class)($user, $role, $account->id, $loc->id);
-    app(GrantRole::class)($user, $role, $account->id, $loc->id);
+    grant($user, $role, $account->id, $loc->id);
+    grant($user, $role, $account->id, $loc->id);
 })->throws(ValidationException::class);
 
 it('rejects a location role granted without a location', function () {
     ['perm' => $perm, 'account' => $account] = scenario();
 
-    app(GrantRole::class)(makeUser('Bad Scope'), roleWith('location', $perm), $account->id);
+    grant(makeUser('Bad Scope'), roleWith('location', $perm), $account->id);
 })->throws(ValidationException::class);
 
 it('rejects a global role granted with a scope', function () {
     ['perm' => $perm, 'account' => $account] = scenario();
 
-    app(GrantRole::class)(makeUser('Bad Global'), roleWith('global', $perm), $account->id);
+    grant(makeUser('Bad Global'), roleWith('global', $perm), $account->id);
 })->throws(ValidationException::class);
 
 it('revokes without deleting, and allows a later re-grant', function () {
@@ -152,13 +160,13 @@ it('revokes without deleting, and allows a later re-grant', function () {
     $user = makeUser('Revoke Test');
     $role = roleWith('location', $perm);
 
-    $assignment = app(GrantRole::class)($user, $role, $account->id, $loc->id);
+    $assignment = grant($user, $role, $account->id, $loc->id);
     app(RevokeRole::class)($assignment);
 
     expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeFalse()
         ->and(UserRoleAssignment::count())->toBe(1);          // history kept
 
-    app(GrantRole::class)($user, $role, $account->id, $loc->id);
+    grant($user, $role, $account->id, $loc->id);
 
     expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue()
         ->and(UserRoleAssignment::count())->toBe(2);          // both rows retained

@@ -26,10 +26,16 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'permission' => \App\Http\Middleware\EnsurePermission::class,
+            'tenant'     => \App\Http\Middleware\ResolveTenant::class,
         ]);
+
+        // Never redirect an unauthenticated API caller to a login page. Without
+        // this, a browser hitting an API route with no Accept header gets a 500
+        // ("Route [login] not defined") instead of a clean 401.
+        $middleware->redirectGuestsTo(fn (Request $request) => $request->is('api/*')
+            ? null
+            : '/');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $exceptions->shouldRenderJsonWhen(
-            fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
-        );
+        \App\Support\Http\ApiExceptionHandler::register($exceptions);
     })->create();
