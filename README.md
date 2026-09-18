@@ -1,4 +1,4 @@
-# Co Connect People — RBAC backend
+# Co Connect — RBAC backend
 
 Laravel 13 implementation of the access-control module: dynamic modules,
 roles, permissions and multi-role users, scoped at global / account / location.

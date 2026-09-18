@@ -4,23 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>Co Connect People — RBAC</title>
+<title>Access Control · Co Connect</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap">
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { font-family: "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-family: "Quicksand", "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif; }
   .chip { @apply inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium; }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
 
-<header class="bg-[#0b2447] text-white">
+<header class="bg-[#04205a] text-white">
   <div class="mx-auto max-w-7xl px-6 py-5 flex items-center justify-between flex-wrap gap-4">
-    <div>
-      <h1 class="text-xl font-semibold">Co Connect People — Access Control</h1>
-      <p class="text-sm text-blue-200">Dynamic modules · roles · permissions · multi-role users</p>
+    <div class="flex items-center gap-3">
+      <img src="/brand/cc-app-icon.png" alt="" width="512" height="512" class="h-9 w-9 rounded-[22%]">
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight">Access control</h1>
+        <p class="text-sm text-[#8fc1f6]">Dynamic modules · roles · permissions · multi-role users</p>
+      </div>
     </div>
     <form method="GET" class="flex items-center gap-2">
-      <label class="text-sm text-blue-200">Account</label>
+      <label class="text-sm text-[#8fc1f6]">Account</label>
       <select name="account" onchange="this.form.submit()"
               class="rounded bg-white/10 border border-white/20 px-3 py-1.5 text-sm text-white">
         @foreach ($accounts as $a)
@@ -246,5 +254,9 @@ document.getElementById('c-go').addEventListener('click', async () => {
   box.classList.remove('hidden');
 });
 </script>
+
+<footer class="mx-auto max-w-7xl px-6 pb-10 pt-6">
+  <p class="text-xs text-slate-500">&copy; {{ date('Y') }} Co Connect &middot; Informed. Engaged. Safe. Connected.</p>
+</footer>
 </body>
 </html>
