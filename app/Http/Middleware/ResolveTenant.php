@@ -18,8 +18,8 @@ use Symfony\Component\HttpFoundation\Response;
  *   2. ?account_id= / X-Account-Id header
  *   3. the caller's only account, when they have exactly one
  *
- * A global role sees every account; anyone else must hold a grant in the one
- * they asked for. Resolution and authorisation live together on purpose —
+ * A super administrator sees every account; anyone else must hold a grant in
+ * the one they asked for. Resolution and authorisation live together on purpose —
  * setting the tenant without checking access would be worse than not scoping
  * at all, because it would look safe.
  */
@@ -86,9 +86,8 @@ class ResolveTenant
 
     private function mayEnter($user, int $accountId): bool
     {
-        $hasGlobal = $user->roleAssignments()->active()
-            ->where('scope_level', 'global')->exists();
-
-        return $hasGlobal || in_array($accountId, $this->accountIds($user), true);
+        // is_admin is the global scope level. It carries no assignment rows, so
+        // there is nothing in accountIds() to find -- it has to be asked directly.
+        return $user->is_admin || in_array($accountId, $this->accountIds($user), true);
     }
 }

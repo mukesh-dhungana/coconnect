@@ -24,14 +24,14 @@ class RevokeRole
         ]);
 
         RbacAudit::record('role.revoked', $assignment, [
-            'user'        => $assignment->user?->name,
-            'role'        => $assignment->role?->name,
+            'user' => $assignment->user?->name,
+            'role' => $assignment->role?->name,
             'scope_level' => $assignment->scope_level,
-            'account_id'  => $assignment->account_id,
+            'account_id' => $assignment->account_id,
             'location_id' => $assignment->location_id,
         ]);
 
-        $this->resolver->flush($assignment->user_id);
+        $this->resolver->flush((int) $assignment->model_id);
 
         return $assignment->fresh();
     }

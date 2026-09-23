@@ -1,7 +1,12 @@
 <?php
 
-use App\Domain\Identity\Models\{Account, Location, User};
-use App\Domain\Rbac\Models\{Module, Permission, Role, UserRoleAssignment};
+use App\Domain\Identity\Models\Account;
+use App\Domain\Identity\Models\Location;
+use App\Domain\Identity\Models\User;
+use App\Domain\Rbac\Models\Module;
+use App\Domain\Rbac\Models\Permission;
+use App\Domain\Rbac\Models\Role;
+use App\Domain\Rbac\Models\UserRoleAssignment;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -26,17 +31,17 @@ function person(string $email): User
 function twoAccounts(): array
 {
     $system = Module::create(['key' => 'system', 'name' => 'System', 'is_core' => true]);
-    $audit  = Permission::create(['name' => 'system.audit_view', 'module_id' => $system->id]);
+    $audit = Permission::create(['name' => 'system.audit_view', 'module_id' => $system->id]);
 
     $acme = Account::create(['name' => 'Acme', 'slug' => 'acme']);
-    $rio  = Account::create(['name' => 'Rio', 'slug' => 'rio']);
+    $rio = Account::create(['name' => 'Rio', 'slug' => 'rio']);
 
     foreach ([$acme, $rio] as $a) {
         $a->modules()->attach($system->id, ['is_enabled' => true]);
     }
 
     $acmeSite = Location::create(['account_id' => $acme->id, 'name' => 'Acme Village', 'slug' => 'acme-village']);
-    $rioSite  = Location::create(['account_id' => $rio->id, 'name' => 'Rio Camp', 'slug' => 'rio-camp']);
+    $rioSite = Location::create(['account_id' => $rio->id, 'name' => 'Rio Camp', 'slug' => 'rio-camp']);
 
     $viewer = Role::create([
         'key' => 'viewer', 'name' => 'Viewer', 'scope_level' => 'account', 'is_system' => true,
@@ -52,7 +57,7 @@ function memberOf(Account $account, Role $role, string $email): User
     $user = person($email);
 
     UserRoleAssignment::create([
-        'user_id' => $user->id, 'role_id' => $role->id,
+        'model_id' => $user->id, 'model_type' => $user::class, 'role_id' => $role->id,
         'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
@@ -148,18 +153,15 @@ it('refuses a request for an account the caller holds no grant in', function () 
         ->assertExactJson(['message' => 'You do not have access to this account.']);
 });
 
-it('lets a global role act inside any account', function () {
+it('lets a super admin act inside any account', function () {
     ['acme' => $acme, 'rio' => $rio] = twoAccounts();
 
-    $admin = Role::create([
-        'key' => 'admin', 'name' => 'Administrator', 'scope_level' => 'global', 'is_system' => true,
-    ]);
-    $admin->permissions()->attach(Permission::where('name', 'system.audit_view')->firstOrFail()->id);
-
+    // The global scope level is a flag, not a role: there is no assignment row
+    // to find, so ResolveTenant has to read is_admin directly.
     $user = person('global@example.com');
-    UserRoleAssignment::create([
-        'user_id' => $user->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
-    ]);
+    $user->update(['is_admin' => true]);
+
+    expect($user->roleAssignments()->count())->toBe(0);
 
     foreach ([$acme, $rio] as $account) {
         $this->actingAs($user)->getJson("/api/v1/accounts/{$account->id}/modules")->assertOk();

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Domain\Identity\Models\Account;
 use App\Domain\Rbac\Models\Module;
+use App\Domain\Rbac\Services\PermissionResolver;
 use App\Domain\Rbac\Support\RbacAudit;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreModuleRequest;
@@ -42,10 +43,10 @@ class ModuleController extends Controller
 
         return $this->ok(
             Module::active()->orderBy('sort_order')->get()->map(fn ($m) => [
-                'id'         => $m->id,
-                'key'        => $m->key,
-                'name'       => $m->name,
-                'is_core'    => $m->is_core,
+                'id' => $m->id,
+                'key' => $m->key,
+                'name' => $m->name,
+                'is_core' => $m->is_core,
                 'is_enabled' => (bool) ($pivot[$m->id]->pivot->is_enabled ?? false),
             ])
         );
@@ -62,18 +63,18 @@ class ModuleController extends Controller
 
         $account->modules()->syncWithoutDetaching([
             $module->id => [
-                'is_enabled'  => $enabled,
-                'enabled_at'  => $enabled ? now() : null,
+                'is_enabled' => $enabled,
+                'enabled_at' => $enabled ? now() : null,
                 'disabled_at' => $enabled ? null : now(),
             ],
         ]);
 
-        cache()->forget("rbac:module:{$account->id}:{$module->key}");
+        app(PermissionResolver::class)->flushModule($module->key, $account->id);
 
         RbacAudit::record($enabled ? 'module.enabled' : 'module.disabled', $module, [
-            'account'    => $account->name,
+            'account' => $account->name,
             'account_id' => $account->id,
-            'module'     => $module->key,
+            'module' => $module->key,
         ]);
 
         return $this->ok(['module' => $module->key, 'is_enabled' => $enabled]);

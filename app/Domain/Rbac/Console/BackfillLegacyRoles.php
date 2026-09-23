@@ -2,6 +2,7 @@
 
 namespace App\Domain\Rbac\Console;
 
+use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Models\Role;
 use App\Domain\Rbac\Models\UserRoleAssignment;
 use Illuminate\Console\Command;
@@ -126,6 +127,7 @@ class BackfillLegacyRoles extends Command
 
                 if (! isset($roles[$key])) {
                     $problems[] = "{$scope}:{$code} → '{$key}' is not an existing system role";
+
                     continue;
                 }
 
@@ -147,6 +149,7 @@ class BackfillLegacyRoles extends Command
         foreach (['account' => 'account_user', 'location' => 'location_user'] as $scope => $table) {
             if (! DB::getSchemaBuilder()->hasTable($table)) {
                 $rows[] = [$scope, '(table absent)', '-', '-'];
+
                 continue;
             }
 
@@ -175,7 +178,7 @@ class BackfillLegacyRoles extends Command
                     continue;
                 }
                 $plan[] = ['user_id' => (int) $row->user_id, 'role' => $roles[$key],
-                           'account_id' => (int) $row->account_id, 'location_id' => null];
+                    'account_id' => (int) $row->account_id, 'location_id' => null];
             }
         }
 
@@ -186,7 +189,7 @@ class BackfillLegacyRoles extends Command
                     continue;
                 }
                 $plan[] = ['user_id' => (int) $row->user_id, 'role' => $roles[$key],
-                           'account_id' => (int) $row->account_id, 'location_id' => (int) $row->location_id];
+                    'account_id' => (int) $row->account_id, 'location_id' => (int) $row->location_id];
             }
         }
 
@@ -222,7 +225,8 @@ class BackfillLegacyRoles extends Command
                 // Idempotent: re-running must not duplicate. The unique index
                 // would reject it anyway; checking first keeps the run clean.
                 $exists = UserRoleAssignment::query()
-                    ->where('user_id', $item['user_id'])
+                    ->where('model_id', $item['user_id'])
+                    ->where('model_type', User::class)
                     ->where('role_id', $role->id)
                     ->whereNull('revoked_at')
                     ->when($item['account_id'], fn ($q, $v) => $q->where('account_id', $v))
@@ -236,13 +240,14 @@ class BackfillLegacyRoles extends Command
                 }
 
                 UserRoleAssignment::create([
-                    'user_id'      => $item['user_id'],
-                    'role_id'      => $role->id,
-                    'scope_level'  => $role->scope_level,
-                    'account_id'   => $item['account_id'],
-                    'location_id'  => $item['location_id'],
+                    'model_id' => $item['user_id'],
+                    'model_type' => User::class,
+                    'role_id' => $role->id,
+                    'scope_level' => $role->scope_level,
+                    'account_id' => $item['account_id'],
+                    'location_id' => $item['location_id'],
                     'grant_reason' => config('rbac.backfill_reason'),
-                    'valid_from'   => now(),
+                    'valid_from' => now(),
                 ]);
 
                 $created++;

@@ -4,10 +4,10 @@ namespace Database\Seeders;
 
 use App\Domain\Identity\Models\Account;
 use App\Domain\Identity\Models\Location;
+use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Models\Module;
 use App\Domain\Rbac\Models\Permission;
 use App\Domain\Rbac\Models\Role;
-use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Models\UserRoleAssignment;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -40,7 +40,7 @@ class RbacSeeder extends Seeder
             ['key' => 'emergency',     'name' => 'Emergency',     'icon' => 'siren',     'sort_order' => 50],
             ['key' => 'compliance',    'name' => 'Compliance',    'icon' => 'shield',    'sort_order' => 60],
             ['key' => 'system',        'name' => 'System',        'icon' => 'cog',       'sort_order' => 90,
-             'is_core' => true, 'description' => 'Always on; cannot be disabled for an account'],
+                'is_core' => true, 'description' => 'Always on; cannot be disabled for an account'],
         ];
 
         $out = [];
@@ -55,46 +55,46 @@ class RbacSeeder extends Seeder
     {
         // name => [module key, description, high risk]
         $rows = [
-            'roster.view'    => ['roster', 'View published rosters and patterns', false],
-            'roster.edit'    => ['roster', 'Create or edit draft rosters and patterns', false],
+            'roster.view' => ['roster', 'View published rosters and patterns', false],
+            'roster.edit' => ['roster', 'Create or edit draft rosters and patterns', false],
             'roster.publish' => ['roster', 'Publish a draft roster to live operations', false],
             'roster.override_fatigue' => ['roster', 'Override a fatigue or rest rule block with a mandatory reason', true],
 
-            'travel.view'     => ['travel', 'View flight schedules, manifests, and waitlists', false],
-            'travel.book'     => ['travel', 'Create or amend a passenger travel booking', false],
+            'travel.view' => ['travel', 'View flight schedules, manifests, and waitlists', false],
+            'travel.book' => ['travel', 'Create or amend a passenger travel booking', false],
             'travel.override_capacity' => ['travel', 'Force a booking that exceeds flight capacity', true],
             'travel.bulk_disrupt' => ['travel', 'Execute bulk cancellations or reassignments during weather events', false],
 
-            'accommodation.view'     => ['accommodation', 'View room inventory, maps, and current allocations', false],
+            'accommodation.view' => ['accommodation', 'View room inventory, maps, and current allocations', false],
             'accommodation.allocate' => ['accommodation', 'Run the algorithm to allocate residents to rooms/beds', false],
             'accommodation.check_in' => ['accommodation', 'Check residents in or out of rooms and issue keys', false],
             'accommodation.override_displacement' => ['accommodation', 'Displace an already checked-in resident', true],
             'accommodation.night_audit' => ['accommodation', 'Run or approve the nightly accommodation reconciliation', false],
 
-            'housekeeping.view'        => ['housekeeping', 'View cleaning tasks and room readiness', false],
+            'housekeeping.view' => ['housekeeping', 'View cleaning tasks and room readiness', false],
             'housekeeping.task_update' => ['housekeeping', 'Update the status of a field cleaning task', false],
-            'housekeeping.inspect'     => ['housekeeping', 'Pass or fail a formal room inspection', false],
+            'housekeeping.inspect' => ['housekeeping', 'Pass or fail a formal room inspection', false],
 
-            'emergency.view'             => ['emergency', 'View Who is On, ERT capabilities, and support directory', false],
+            'emergency.view' => ['emergency', 'View Who is On, ERT capabilities, and support directory', false],
             'emergency.handover_request' => ['emergency', 'Request a handover for a critical duty', false],
-            'emergency.handover_accept'  => ['emergency', 'Accept a handover request to take accountability', false],
-            'emergency.incident_activate'=> ['emergency', 'Declare and activate a new incident', true],
+            'emergency.handover_accept' => ['emergency', 'Accept a handover request to take accountability', false],
+            'emergency.incident_activate' => ['emergency', 'Declare and activate a new incident', true],
             'emergency.override_assignment' => ['emergency', 'Force transfer an emergency role without acceptance', true],
 
-            'presence.view'              => ['compliance', 'View expected vs confirmed personnel manifest', false],
+            'presence.view' => ['compliance', 'View expected vs confirmed personnel manifest', false],
             'presence.manual_correction' => ['compliance', 'Manually override presence status without a swipe event', true],
-            'presence.welfare_resolve'   => ['compliance', 'Assign and resolve welfare checks and AOD exceptions', false],
+            'presence.welfare_resolve' => ['compliance', 'Assign and resolve welfare checks and AOD exceptions', false],
 
-            'system.audit_view'         => ['system', 'View the immutable audit ledger', false],
+            'system.audit_view' => ['system', 'View the immutable audit ledger', false],
             'system.integration_manage' => ['system', 'Configure Serko, Gallagher, and Alcolizer API connections', true],
         ];
 
         $out = [];
         foreach ($rows as $name => [$moduleKey, $description, $highRisk]) {
             $out[$name] = Permission::create([
-                'name'         => $name,
-                'module_id'    => $modules[$moduleKey]->id,
-                'description'  => $description,
+                'name' => $name,
+                'module_id' => $modules[$moduleKey]->id,
+                'description' => $description,
                 'is_high_risk' => $highRisk,
             ]);
         }
@@ -105,8 +105,9 @@ class RbacSeeder extends Seeder
     private function roles(array $permissions): array
     {
         // name => [scope, key, [permission names]]
+        // No 'System Administrator' role: the global scope level does not exist
+        // in the schema. A super administrator is users.is_admin -- see Erin below.
         $rows = [
-            'System Administrator' => ['global', 'system_administrator', array_keys($permissions)],
             'Roster Coordinator' => ['account', 'roster_coordinator', [
                 'roster.view', 'roster.edit', 'roster.publish', 'roster.override_fatigue',
                 'travel.view', 'accommodation.view', 'emergency.view', 'presence.view',
@@ -154,11 +155,11 @@ class RbacSeeder extends Seeder
         $out = [];
         foreach ($rows as $name => [$scope, $key, $perms]) {
             $role = Role::create([
-                'account_id'  => null,          // system role
-                'key'         => $key,
-                'name'        => $name,
+                'account_id' => null,          // system role
+                'key' => $key,
+                'name' => $name,
                 'scope_level' => $scope,
-                'is_system'   => true,
+                'is_system' => true,
             ]);
             $role->permissions()->sync(collect($perms)->map(fn ($p) => $permissions[$p]->id)->all());
             $out[$name] = $role;
@@ -176,7 +177,7 @@ class RbacSeeder extends Seeder
             'Snazzy Resources' => ['snazzy-resources', ['Village', 'Site'],
                 ['roster', 'travel', 'accommodation', 'housekeeping', 'emergency', 'compliance', 'system']],
             // Deliberately has NO travel module: shows the commercial boundary.
-            'City of Rio'      => ['city-of-rio', ['Community', 'LGA'],
+            'City of Rio' => ['city-of-rio', ['Community', 'LGA'],
                 ['roster', 'accommodation', 'emergency', 'compliance', 'system']],
         ];
 
@@ -197,8 +198,8 @@ class RbacSeeder extends Seeder
             foreach ($locationNames as $locationName) {
                 $locations[] = Location::create([
                     'account_id' => $account->id,
-                    'name'       => $locationName,
-                    'slug'       => Str::slug($name.'-'.$locationName),
+                    'name' => $locationName,
+                    'slug' => Str::slug($name.'-'.$locationName),
                 ]);
             }
 
@@ -211,52 +212,51 @@ class RbacSeeder extends Seeder
     private function users(array $roles, array $accounts, array $locations): void
     {
         $snazzy = $accounts['Snazzy Resources'];
-        $rio    = $accounts['City of Rio'];
+        $rio = $accounts['City of Rio'];
         $village = collect($locations)->firstWhere('name', 'Village');
-        $site    = collect($locations)->firstWhere('name', 'Site');
+        $site = collect($locations)->firstWhere('name', 'Site');
         $community = collect($locations)->firstWhere('name', 'Community');
 
-        $make = function (string $first, string $last, string $email) {
+        $make = function (string $first, string $last, string $email, bool $superAdmin = false) {
             return User::create([
                 'first_name' => $first, 'last_name' => $last,
                 'uuid' => (string) Str::uuid(), 'email' => $email,
                 'mobile' => '+614'.random_int(10000000, 99999999),
                 'password' => Hash::make('password'),
+                'is_admin' => $superAdmin,
             ]);
         };
 
-        $erin  = $make('Erin', 'Bell', 'erin@coconnectapp.com');
+        // Super administrator: every permission, every account, no rows needed.
+        $erin = $make('Erin', 'Bell', 'erin@coconnectapp.com', superAdmin: true);
         $admin = $make('Admin', 'Manager', 'admin@nano.rocks');
-        $trav  = $make('Manager', 'Manager', 'manager@nano.rocks');
-        $brad  = $make('Brad', 'Smith', 'brad@campconnect.com.au');
+        $trav = $make('Manager', 'Manager', 'manager@nano.rocks');
+        $brad = $make('Brad', 'Smith', 'brad@campconnect.com.au');
         $keira = $make('Keira', 'Novak', 'keira@campconnect.com.au');
-        $petr  = $make('Petr', 'Emergency', 'petr.emergency@campconnect.com.au');
-        $worker= $make('Demo', 'User', 'demo@example.com');
+        $petr = $make('Petr', 'Emergency', 'petr.emergency@campconnect.com.au');
+        $worker = $make('Demo', 'User', 'demo@example.com');
 
-        $grant = fn (User $u, string $role, $acc = null, $loc = null, $until = null, $by = null) =>
-            UserRoleAssignment::create([
-                'user_id'     => $u->id,
-                'role_id'     => $roles[$role]->id,
-                'scope_level' => $roles[$role]->scope_level,
-                'account_id'  => $acc?->id,
-                'location_id' => $loc?->id,
-                'granted_by'  => $by?->id,
-                'valid_from'  => now()->subDay(),
-                'valid_until' => $until,
-            ]);
-
-        // Global
-        $grant($erin, 'System Administrator');
+        $grant = fn (User $u, string $role, $acc, $loc = null, $until = null, $by = null) => UserRoleAssignment::create([
+            'model_id' => $u->id,
+            'model_type' => $u::class,
+            'role_id' => $roles[$role]->id,
+            'scope_level' => $roles[$role]->scope_level,
+            'account_id' => $acc->id,
+            'location_id' => $loc?->id,
+            'granted_by' => $by?->id,
+            'valid_from' => now()->subDay(),
+            'valid_until' => $until,
+        ]);
 
         // Account-scoped
         $grant($admin, 'Roster Coordinator', $snazzy, null, null, $erin);
-        $grant($trav,  'Travel Coordinator', $snazzy, null, null, $erin);
+        $grant($trav, 'Travel Coordinator', $snazzy, null, null, $erin);
 
         // The same person coordinating travel for a SECOND account.
-        $grant($trav,  'Travel Coordinator', $rio, null, null, $erin);
+        $grant($trav, 'Travel Coordinator', $rio, null, null, $erin);
 
         // Location-scoped
-        $grant($brad,  'Village Accommodation Manager', $snazzy, $village, null, $erin);
+        $grant($brad, 'Village Accommodation Manager', $snazzy, $village, null, $erin);
         $grant($keira, 'Housekeeping Supervisor', $snazzy, $village, null, $brad);
 
         // MULTI-ROLE: ERT Member permanently, plus a TEMPORARY EMT Leader

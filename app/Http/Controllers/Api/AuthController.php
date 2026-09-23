@@ -55,18 +55,22 @@ class AuthController extends Controller
 
         return [
             'user' => [
-                'id'    => $user->id,
-                'name'  => $user->name,
+                'id' => $user->id,
+                'name' => $user->name,
                 'email' => $user->email,
+                // The global scope level. A super admin holds no assignments,
+                // so without this the SPA cannot tell them from a user with
+                // nothing granted at all.
+                'is_admin' => (bool) $user->is_admin,
             ],
             'roles' => $assignments->map(fn ($a) => [
-                'role'        => $a->role->name,
+                'role' => $a->role->name,
                 'scope_level' => $a->scope_level,
-                'account'     => $a->account?->name,
-                'account_id'  => $a->account_id,
-                'location'    => $a->location?->name,
+                'account' => $a->account?->name,
+                'account_id' => $a->account_id,
+                'location' => $a->location?->name,
                 'location_id' => $a->location_id,
-                'expires_at'  => $a->valid_until?->toIso8601String(),
+                'expires_at' => $a->valid_until?->toIso8601String(),
             ])->values(),
             'permissions' => $this->resolver->permissionNames($user),
         ];

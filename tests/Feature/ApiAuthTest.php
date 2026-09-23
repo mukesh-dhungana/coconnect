@@ -1,7 +1,12 @@
 <?php
 
-use App\Domain\Identity\Models\{Account, Location, User};
-use App\Domain\Rbac\Models\{Module, Permission, Role, UserRoleAssignment};
+use App\Domain\Identity\Models\Account;
+use App\Domain\Identity\Models\Location;
+use App\Domain\Identity\Models\User;
+use App\Domain\Rbac\Models\Module;
+use App\Domain\Rbac\Models\Permission;
+use App\Domain\Rbac\Models\Role;
+use App\Domain\Rbac\Models\UserRoleAssignment;
 use App\Domain\Rbac\Support\RbacAudit;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -20,16 +25,16 @@ function rbacWorld(): array
     $system = Module::create(['key' => 'system', 'name' => 'System', 'is_core' => true]);
     $travel = Module::create(['key' => 'travel', 'name' => 'Travel']);
 
-    $audit  = Permission::create(['name' => 'system.audit_view', 'module_id' => $system->id]);
+    $audit = Permission::create(['name' => 'system.audit_view', 'module_id' => $system->id]);
     $manage = Permission::create(['name' => 'system.integration_manage', 'module_id' => $system->id]);
-    $book   = Permission::create(['name' => 'travel.book', 'module_id' => $travel->id]);
+    $book = Permission::create(['name' => 'travel.book', 'module_id' => $travel->id]);
 
     $account = Account::create(['name' => 'Acme', 'slug' => 'acme']);
     Location::create(['account_id' => $account->id, 'name' => 'Village', 'slug' => 'village']);
     $account->modules()->attach($system->id, ['is_enabled' => true]);
     $account->modules()->attach($travel->id, ['is_enabled' => true]);
 
-    $admin = Role::create(['key' => 'admin', 'name' => 'Administrator', 'scope_level' => 'global', 'is_system' => true]);
+    $admin = Role::create(['key' => 'admin', 'name' => 'Administrator', 'scope_level' => 'account', 'is_system' => true]);
     $admin->permissions()->attach([$audit->id, $manage->id, $book->id]);
 
     $worker = Role::create(['key' => 'worker', 'name' => 'Worker', 'scope_level' => 'account', 'is_system' => true]);
@@ -49,8 +54,8 @@ it('rejects a signed-in user who lacks the permission', function () {
     $user = makePerson('worker@example.com');
 
     UserRoleAssignment::create([
-        'user_id' => $user->id, 'role_id' => $worker->id, 'scope_level' => 'account',
-        'account_id' => $account->id, 'valid_from' => now(),
+        'model_id' => $user->id, 'model_type' => $user::class, 'role_id' => $worker->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($user)->getJson('/api/v1/users')->assertStatus(403);
@@ -60,11 +65,12 @@ it('rejects a signed-in user who lacks the permission', function () {
 });
 
 it('allows a user who holds the permission', function () {
-    ['admin' => $admin] = rbacWorld();
+    ['account' => $account, 'admin' => $admin] = rbacWorld();
     $user = makePerson('admin@example.com');
 
     UserRoleAssignment::create([
-        'user_id' => $user->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+        'model_id' => $user->id, 'model_type' => $user::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($user)->getJson('/api/v1/users')->assertOk();
@@ -72,10 +78,11 @@ it('allows a user who holds the permission', function () {
 });
 
 it('returns the signed-in profile with roles and permissions', function () {
-    ['admin' => $admin] = rbacWorld();
+    ['account' => $account, 'admin' => $admin] = rbacWorld();
     $user = makePerson('admin@example.com');
     UserRoleAssignment::create([
-        'user_id' => $user->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+        'model_id' => $user->id, 'model_type' => $user::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($user)->getJson('/api/v1/me')
@@ -91,7 +98,8 @@ it('records an audit entry when a role is granted and revoked', function () {
     $target = makePerson('target@example.com');
 
     UserRoleAssignment::create([
-        'user_id' => $actor->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+        'model_id' => $actor->id, 'model_type' => $actor::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($actor)
@@ -105,7 +113,7 @@ it('records an audit entry when a role is granted and revoked', function () {
         ->and($granted->causer_id)->toBe($actor->id)
         ->and($granted->properties['reason'])->toBe('covering leave');
 
-    $assignment = UserRoleAssignment::where('user_id', $target->id)->firstOrFail();
+    $assignment = UserRoleAssignment::where('model_id', $target->id)->firstOrFail();
     $this->actingAs($actor)->deleteJson("/api/v1/assignments/{$assignment->id}")->assertOk();
 
     expect(RbacAudit::query()->where('event', 'role.revoked')->exists())->toBeTrue();
@@ -115,7 +123,8 @@ it('records an audit entry when a module is toggled', function () {
     ['account' => $account, 'admin' => $admin, 'travel' => $travel] = rbacWorld();
     $actor = makePerson('actor@example.com');
     UserRoleAssignment::create([
-        'user_id' => $actor->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+        'model_id' => $actor->id, 'model_type' => $actor::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($actor)
@@ -133,7 +142,8 @@ it('creates a user with no roles and an unusable password', function () {
     ['account' => $account, 'admin' => $admin] = rbacWorld();
     $actor = makePerson('actor@example.com');
     UserRoleAssignment::create([
-        'user_id' => $actor->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+        'model_id' => $actor->id, 'model_type' => $actor::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($actor)->postJson('/api/v1/users', [
@@ -154,8 +164,8 @@ it('refuses to create a user without the manage permission', function () {
     ['account' => $account, 'worker' => $worker] = rbacWorld();
     $user = makePerson('worker@example.com');
     UserRoleAssignment::create([
-        'user_id' => $user->id, 'role_id' => $worker->id, 'scope_level' => 'account',
-        'account_id' => $account->id, 'valid_from' => now(),
+        'model_id' => $user->id, 'model_type' => $user::class, 'role_id' => $worker->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($user)->postJson('/api/v1/users', [
@@ -166,10 +176,11 @@ it('refuses to create a user without the manage permission', function () {
 });
 
 it('rejects a duplicate email', function () {
-    ['admin' => $admin] = rbacWorld();
+    ['account' => $account, 'admin' => $admin] = rbacWorld();
     $actor = makePerson('actor@example.com');
     UserRoleAssignment::create([
-        'user_id' => $actor->id, 'role_id' => $admin->id, 'scope_level' => 'global', 'valid_from' => now(),
+        'model_id' => $actor->id, 'model_type' => $actor::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
     ]);
 
     $this->actingAs($actor)->postJson('/api/v1/users', [

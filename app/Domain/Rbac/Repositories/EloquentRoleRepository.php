@@ -6,6 +6,7 @@ use App\Domain\Rbac\Contracts\RoleRepository;
 use App\Domain\Rbac\Models\Permission;
 use App\Domain\Rbac\Models\Role;
 use Illuminate\Support\Collection;
+use Spatie\Permission\PermissionRegistrar;
 
 class EloquentRoleRepository implements RoleRepository
 {
@@ -38,17 +39,21 @@ class EloquentRoleRepository implements RoleRepository
             Permission::whereIn('name', $permissionNames)->pluck('id')->all()
         );
 
+        // sync() writes the pivot directly, which Spatie's RefreshesPermissionCache
+        // trait never sees. Without this the package keeps serving the old map.
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $after = $role->permissions()->pluck('name')->sort()->values()->all();
 
         return [
-            'added'   => array_values(array_diff($after, $before)),
+            'added' => array_values(array_diff($after, $before)),
             'removed' => array_values(array_diff($before, $after)),
         ];
     }
 
     public function holderIds(Role $role): array
     {
-        return $role->assignments()->distinct()->pluck('user_id')
+        return $role->assignments()->distinct()->pluck('model_id')
             ->map(fn ($id) => (int) $id)->all();
     }
 }
