@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Domain\Identity\Models\User;
-use App\Domain\Rbac\Services\PermissionResolver;
+use App\Domain\Rbac\Services\PermissionCatalog;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LoginRequest;
 use App\Support\Concerns\RespondsWithJson;
@@ -16,7 +16,7 @@ class AuthController extends Controller
 {
     use RespondsWithJson;
 
-    public function __construct(private PermissionResolver $resolver) {}
+    public function __construct(private PermissionCatalog $catalog) {}
 
     public function login(LoginRequest $request): JsonResponse
     {
@@ -72,7 +72,7 @@ class AuthController extends Controller
                 'location_id' => $a->location_id,
                 'expires_at' => $a->valid_until?->toIso8601String(),
             ])->values(),
-            'permissions' => $this->resolver->permissionNames($user),
+            'permissions' => $this->catalog->permissionNames($user),
         ];
     }
 }

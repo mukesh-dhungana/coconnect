@@ -10,7 +10,8 @@ use Spatie\Permission\Models\Permission as SpatiePermission;
  *
  * module_id is what makes a permission commercially revocable: an account that
  * has not enabled the module is denied the permission no matter which role
- * carries it. Spatie has no concept of that, so PermissionResolver enforces it.
+ * carries it. Spatie has no concept of that, so User::hasPermissionTo() enforces
+ * it via PermissionCatalog.
  */
 class Permission extends SpatiePermission
 {

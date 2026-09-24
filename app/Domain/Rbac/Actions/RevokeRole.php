@@ -4,7 +4,6 @@ namespace App\Domain\Rbac\Actions;
 
 use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Models\UserRoleAssignment;
-use App\Domain\Rbac\Services\PermissionResolver;
 use App\Domain\Rbac\Support\RbacAudit;
 
 /**
@@ -14,8 +13,6 @@ use App\Domain\Rbac\Support\RbacAudit;
  */
 class RevokeRole
 {
-    public function __construct(private PermissionResolver $resolver) {}
-
     public function __invoke(UserRoleAssignment $assignment, ?User $revokedBy = null): UserRoleAssignment
     {
         $assignment->update([
@@ -30,8 +27,6 @@ class RevokeRole
             'account_id' => $assignment->account_id,
             'location_id' => $assignment->location_id,
         ]);
-
-        $this->resolver->flush((int) $assignment->model_id);
 
         return $assignment->fresh();
     }

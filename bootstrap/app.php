@@ -25,7 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->statefulApi();
 
         $middleware->alias([
-            'permission' => \App\Http\Middleware\EnsurePermission::class,
+            // Spatie's own middleware. The scope it checks in is set by 'tenant'.
+            'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'tenant'     => \App\Http\Middleware\ResolveTenant::class,
         ]);
 

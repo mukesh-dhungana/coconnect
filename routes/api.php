@@ -16,8 +16,9 @@ use Illuminate\Support\Facades\Route;
 |
 | Administration is guarded three times: `auth:sanctum` proves who you are,
 | `tenant` decides which account the request acts inside (and refuses one you
-| hold no grant in), and `permission:<name>` asks the resolver whether you may
-| do it there. The resolver remains the single authority.
+| hold no grant in), and `permission:<name>` asks whether you may
+| do it there -- Spatie's PermissionMiddleware, answering for the account and
+| location `tenant` put in scope.
 */
 
 Route::prefix('v1')->group(function () {
@@ -47,12 +48,18 @@ Route::prefix('v1')->group(function () {
             Route::get('audit/events', [AuditController::class, 'events']);
         });
 
-        // Changing the model requires configuration rights.
+        // Changing the model requires configuration rights: platform-level,
+        // so in practice only a super administrator.
         Route::middleware('permission:system.integration_manage')->group(function () {
             Route::post('modules', [ModuleController::class, 'store']);
             Route::put('accounts/{account}/modules/{module}', [ModuleController::class, 'toggleForAccount']);
             Route::post('roles', [RoleController::class, 'store']);
             Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
+        });
+
+        // Adding personnel and managing their roles. Answered for the account
+        // `tenant` put in scope; operational roles never carry it.
+        Route::middleware('permission:system.user_manage')->group(function () {
             Route::post('users', [UserController::class, 'store']);
             Route::post('users/{user}/assignments', [AssignmentController::class, 'store']);
             Route::delete('assignments/{assignment}', [AssignmentController::class, 'destroy']);

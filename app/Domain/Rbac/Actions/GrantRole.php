@@ -2,11 +2,11 @@
 
 namespace App\Domain\Rbac\Actions;
 
+use App\Domain\Identity\Models\Location;
 use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Data\GrantRoleData;
 use App\Domain\Rbac\Models\Role;
 use App\Domain\Rbac\Models\UserRoleAssignment;
-use App\Domain\Rbac\Services\PermissionResolver;
 use App\Domain\Rbac\Support\RbacAudit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -24,8 +24,6 @@ use Illuminate\Validation\ValidationException;
  */
 class GrantRole
 {
-    public function __construct(private PermissionResolver $resolver) {}
-
     public function __invoke(GrantRoleData $data): UserRoleAssignment
     {
         $role = $data->role;
@@ -34,6 +32,8 @@ class GrantRole
         $locationId = $data->locationId;
 
         $this->assertScopeMatches($role, $accountId, $locationId);
+        $this->assertRoleAvailable($role, $accountId);
+        $this->assertLocationInAccount($locationId, $accountId);
         $this->assertNotDuplicate($user, $role, $accountId, $locationId);
 
         $assignment = DB::transaction(fn () => UserRoleAssignment::create([
@@ -59,8 +59,6 @@ class GrantRole
             'reason' => $data->reason,
         ]);
 
-        $this->resolver->flush($user->id);
-
         return $assignment;
     }
 
@@ -79,6 +77,44 @@ class GrantRole
                     Role::SCOPE_LOCATION => 'both an account and a location.',
                     default => 'a valid scope.',
                 },
+            ]);
+        }
+    }
+
+    /**
+     * A role owned by another account would be written, audited as granted, and
+     * then never match: Spatie's roles() only returns system roles and the active
+     * team's own. Refuse it rather than record access that does not exist.
+     */
+    private function assertRoleAvailable(Role $role, int $accountId): void
+    {
+        if ($role->account_id !== null && $role->account_id !== $accountId) {
+            throw ValidationException::withMessages([
+                'role_id' => "{$role->name} belongs to another account and cannot be granted here.",
+            ]);
+        }
+    }
+
+    /**
+     * Nothing downstream re-checks that a location sits inside the grant's
+     * account, so a foreign location here would grant real access to another
+     * tenant's site. acrossTenants() so the check does not depend on whichever
+     * tenant the request happens to have resolved.
+     */
+    private function assertLocationInAccount(?int $locationId, int $accountId): void
+    {
+        if ($locationId === null) {
+            return;
+        }
+
+        $inAccount = Location::acrossTenants()
+            ->whereKey($locationId)
+            ->where('account_id', $accountId)
+            ->exists();
+
+        if (! $inAccount) {
+            throw ValidationException::withMessages([
+                'location_id' => 'That location does not belong to the selected account.',
             ]);
         }
     }

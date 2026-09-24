@@ -10,7 +10,10 @@ use App\Domain\Rbac\Models\Module;
 use App\Domain\Rbac\Models\Permission;
 use App\Domain\Rbac\Models\Role;
 use App\Domain\Rbac\Models\UserRoleAssignment;
-use App\Domain\Rbac\Services\PermissionResolver;
+use App\Domain\Rbac\Services\PermissionCatalog;
+use App\Domain\Rbac\Support\PermissionScope;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -156,7 +159,7 @@ it('denies everything when the module is disabled for that account', function ()
 
     // Commercial boundary: the client has not bought this module.
     $account->modules()->updateExistingPivot($module->id, ['is_enabled' => false]);
-    app(PermissionResolver::class)->flushModule('roster', $account->id);
+    app(PermissionCatalog::class)->flushModule('roster', $account->id);
 
     expect($user->hasPermission('roster.publish', $account->id))->toBeFalse();
 });
@@ -166,7 +169,7 @@ it('denies a super admin a module the account has not bought', function () {
     $user = makeUser('Glenda Global', superAdmin: true);
 
     $account->modules()->updateExistingPivot($module->id, ['is_enabled' => false]);
-    app(PermissionResolver::class)->flushModule('roster', $account->id);
+    app(PermissionCatalog::class)->flushModule('roster', $account->id);
 
     // is_admin is checked AFTER module enablement, on purpose.
     expect($user->hasPermission('roster.publish', $account->id))->toBeFalse();
@@ -256,6 +259,44 @@ it('rejects any grant without an account', function () {
     grant(makeUser('No Account'), roleWith('account', $perm));
 })->throws(ValidationException::class);
 
+it('rejects a location that belongs to another account', function () {
+    ['perm' => $perm, 'account' => $account, 'other' => $other] = scenario();
+    $foreign = Location::create(['account_id' => $other->id, 'name' => 'Foreign', 'slug' => 'foreign']);
+    $user = makeUser('Cross Tenant');
+
+    expect(fn () => grant($user, roleWith('location', $perm), $account->id, $foreign->id))
+        ->toThrow(ValidationException::class)
+        ->and(UserRoleAssignment::count())->toBe(0)
+        ->and($user->hasPermission('roster.publish', $account->id, $foreign->id))->toBeFalse();
+});
+
+it('rejects a role owned by another account', function () {
+    ['perm' => $perm, 'account' => $account, 'other' => $other] = scenario();
+    $role = Role::create([
+        'account_id' => $other->id, 'key' => 'other_only', 'name' => 'Other Only',
+        'scope_level' => 'account', 'is_system' => false,
+    ]);
+    $role->permissions()->attach($perm->id);
+
+    expect(fn () => grant(makeUser('Foreign Role'), $role, $account->id))
+        ->toThrow(ValidationException::class)
+        ->and(UserRoleAssignment::count())->toBe(0);
+});
+
+it("grants an account's own role inside that account", function () {
+    ['perm' => $perm, 'account' => $account] = scenario();
+    $role = Role::create([
+        'account_id' => $account->id, 'key' => 'acme_only', 'name' => 'Acme Only',
+        'scope_level' => 'account', 'is_system' => false,
+    ]);
+    $role->permissions()->attach($perm->id);
+    $user = makeUser('Own Role');
+
+    grant($user, $role, $account->id);
+
+    expect($user->hasPermission('roster.publish', $account->id))->toBeTrue();
+});
+
 it('denies a permission nobody granted', function () {
     ['account' => $account] = scenario();
 
@@ -263,17 +304,119 @@ it('denies a permission nobody granted', function () {
 });
 
 // ---------------------------------------------------------------------------
-// The Gate is the public entry point
+// Spatie's own API is the entry point
 // ---------------------------------------------------------------------------
+//
+// can(), hasPermissionTo() and the permission: middleware all answer for the
+// scope ResolveTenant sets. These set it the same way and ask through each
+// door, including the cases Spatie alone would get wrong.
 
-it('answers through the Gate as well as the resolver', function () {
+afterEach(fn () => app(PermissionScope::class)->set(null));
+
+it('registers Spatie\'s Gate hook', function () {
+    expect(config('permission.register_permission_check_method'))->toBeTrue();
+});
+
+it('answers can() for the location in scope', function () {
     ['perm' => $perm, 'account' => $account, 'location' => $loc, 'location2' => $loc2] = scenario();
     $user = makeUser('Gate User');
-
     grant($user, roleWith('location', $perm), $account->id, $loc->id);
 
-    expect($user->can('roster.publish', [$account->id, $loc->id]))->toBeTrue()
-        ->and($user->can('roster.publish', [$account->id, $loc2->id]))->toBeFalse();
+    app(PermissionScope::class)->set($account->id, $loc->id);
+    expect($user->can('roster.publish'))->toBeTrue()
+        ->and($user->hasPermissionTo('roster.publish'))->toBeTrue();
+
+    app(PermissionScope::class)->set($account->id, $loc2->id);
+    expect($user->can('roster.publish'))->toBeFalse()
+        ->and($user->hasPermissionTo('roster.publish'))->toBeFalse();
+});
+
+it('does not answer can() for another account', function () {
+    ['perm' => $perm, 'account' => $account, 'other' => $other] = scenario();
+    $user = makeUser('Gate Account');
+    grant($user, roleWith('account', $perm), $account->id);
+
+    app(PermissionScope::class)->set($other->id);
+
+    expect($user->can('roster.publish'))->toBeFalse();
+});
+
+it('denies can() once the grant is revoked, on the same model instance', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    $user = makeUser('Gate Revoked');
+    $assignment = grant($user, roleWith('location', $perm), $account->id, $loc->id);
+    app(PermissionScope::class)->set($account->id, $loc->id);
+
+    expect($user->can('roster.publish'))->toBeTrue();     // loads Spatie's roles relation
+
+    app(RevokeRole::class)($assignment);
+
+    expect($user->can('roster.publish'))->toBeFalse();    // ...which must not be reused
+});
+
+it('denies can() once a temporary grant expires', function () {
+    ['perm' => $perm, 'account' => $account] = scenario();
+    $user = makeUser('Gate Expiry');
+    grant($user, roleWith('account', $perm), $account->id, validUntil: now()->addHour()->toDateTimeString());
+    app(PermissionScope::class)->set($account->id);
+
+    expect($user->can('roster.publish'))->toBeTrue();
+    $this->travel(2)->hours();
+    expect($user->can('roster.publish'))->toBeFalse();
+});
+
+it('denies can() when the module is disabled, even for a super admin', function () {
+    ['account' => $account, 'module' => $module, 'perm' => $perm] = scenario();
+    $user = makeUser('Gate Module');
+    grant($user, roleWith('account', $perm), $account->id);
+    $admin = makeUser('Gate Admin', superAdmin: true);
+
+    $account->modules()->updateExistingPivot($module->id, ['is_enabled' => false]);
+    app(PermissionCatalog::class)->flushModule('roster', $account->id);
+    app(PermissionScope::class)->set($account->id);
+
+    expect($user->can('roster.publish'))->toBeFalse()
+        ->and($admin->can('roster.publish'))->toBeFalse();
+});
+
+it('treats an unknown permission as a plain no through can()', function () {
+    ['account' => $account] = scenario();
+    app(PermissionScope::class)->set($account->id);
+
+    expect(makeUser('Gate Admin', superAdmin: true)->can('roster.invented'))->toBeFalse();
+});
+
+it('leaves non-permission abilities to ordinary Laravel gates', function () {
+    Gate::define('edit-profile', fn () => true);
+
+    expect(makeUser('Plain Gate')->can('edit-profile'))->toBeTrue();
+});
+
+it('restores the request scope after asking about another one', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc, 'other' => $other] = scenario();
+    $user = makeUser('Scope Restore');
+    grant($user, roleWith('location', $perm), $account->id, $loc->id);
+    $scope = app(PermissionScope::class);
+    $scope->set($other->id);
+
+    expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue()
+        ->and($scope->accountId())->toBe($other->id)
+        ->and($scope->locationId())->toBeNull()
+        ->and($user->can('roster.publish'))->toBeFalse();
+});
+
+it('guards a route with Spatie\'s permission middleware, scoped by the tenant middleware', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc, 'location2' => $loc2] = scenario();
+    $user = makeUser('Route User');
+    grant($user, roleWith('location', $perm), $account->id, $loc->id);
+
+    Route::middleware(['auth:sanctum', 'tenant', 'permission:roster.publish'])
+        ->get('/_test/publish', fn () => response()->json(['ok' => true]));
+
+    $this->actingAs($user)
+        ->getJson("/_test/publish?account_id={$account->id}&location_id={$loc->id}")->assertOk();
+    $this->actingAs($user)
+        ->getJson("/_test/publish?account_id={$account->id}&location_id={$loc2->id}")->assertForbidden();
 });
 
 // ---------------------------------------------------------------------------
@@ -281,11 +424,11 @@ it('answers through the Gate as well as the resolver', function () {
 // ---------------------------------------------------------------------------
 
 it('never calls Spatie methods that would bypass scope or delete the audit trail', function () {
-    // assignRole/removeRole/syncRoles write the pivot without location, scope
-    // or audit columns, and removeRole DETACHES -- deleting revocation history.
-    // hasRole/hasPermissionTo/hasAnyRole skip the Gate, so they skip the module
-    // boundary and the location check. Grants go through GrantRole/RevokeRole.
-    $banned = ['assignRole', 'removeRole', 'syncRoles', 'hasRole', 'hasAnyRole', 'hasPermissionTo'];
+    // Reads are Spatie's and are scope-safe (see User::roles/hasPermissionTo).
+    // Writes are not: assignRole/removeRole/syncRoles write the pivot without
+    // location, scope or audit columns, and removeRole DETACHES -- deleting
+    // revocation history. Grants go through GrantRole/RevokeRole.
+    $banned = ['assignRole', 'removeRole', 'syncRoles'];
 
     $offenders = [];
 
@@ -300,10 +443,7 @@ it('never calls Spatie methods that would bypass scope or delete the audit trail
             $source = file_get_contents($file->getPathname());
 
             foreach ($banned as $method) {
-                // Role::hasPermissionTo is the one legitimate use: it reads the
-                // role's own permissions and is how the resolver asks Spatie.
-                if (preg_match('/->'.$method.'\(/', $source)
-                    && ! str_contains($file->getPathname(), 'PermissionResolver.php')) {
+                if (preg_match('/->'.$method.'\(/', $source)) {
                     $offenders[] = str_replace(base_path().'/', '', $file->getPathname())." uses ->{$method}()";
                 }
             }

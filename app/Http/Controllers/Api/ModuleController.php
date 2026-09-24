@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Domain\Identity\Models\Account;
 use App\Domain\Rbac\Models\Module;
-use App\Domain\Rbac\Services\PermissionResolver;
+use App\Domain\Rbac\Services\PermissionCatalog;
 use App\Domain\Rbac\Support\RbacAudit;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreModuleRequest;
@@ -69,7 +69,7 @@ class ModuleController extends Controller
             ],
         ]);
 
-        app(PermissionResolver::class)->flushModule($module->key, $account->id);
+        app(PermissionCatalog::class)->flushModule($module->key, $account->id);
 
         RbacAudit::record($enabled ? 'module.enabled' : 'module.disabled', $module, [
             'account' => $account->name,

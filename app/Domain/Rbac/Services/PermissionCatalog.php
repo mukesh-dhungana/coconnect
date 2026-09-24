@@ -3,97 +3,45 @@
 namespace App\Domain\Rbac\Services;
 
 use App\Domain\Identity\Models\User;
-use App\Domain\Rbac\Models\Role;
 use App\Domain\Rbac\Models\UserRoleAssignment;
-use App\Support\Tenancy\TenantContext;
-use Closure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Spatie\Permission\PermissionRegistrar;
 
 /**
- * Resolves whether a user holds a permission at a given scope.
+ * What spatie/laravel-permission has no model for: modules.
  *
- * spatie/laravel-permission owns the part it is good at -- which permissions a
- * role carries, and the cache in front of that. This class owns the three
- * questions the package has no opinion on:
+ * Permission CHECKS are Spatie's -- $user->can(), hasPermissionTo(), @can and
+ * the permission: middleware -- made scope-aware by User::roles() and
+ * User::hasPermissionTo(). This class supplies the one rule those call into:
+ * a permission belongs to a module, and an account that has not enabled the
+ * module is denied it, whoever is asking. Module enablement is a commercial
+ * boundary, not a convenience.
  *
- *   1. Is the user a SUPER ADMINISTRATOR? users.is_admin short-circuits
- *      everything. Spatie pins each assignment to one team, so "every account"
- *      is not something its tables can express; a flag is.
- *   2. Does the grant's LOCATION cover the location being asked about?
- *      Teams give one scope dimension and account_id has it, so location rides
- *      on the assignment pivot and is filtered in User::scopedRoles().
- *   3. Is the permission's MODULE enabled for the account being asked about?
- *
- * Rule 3 is the one people forget. Module enablement is a commercial boundary,
- * not a convenience, so it is enforced here rather than only hidden in the UI --
- * and it is checked BEFORE the super-admin flag, so a module the client has not
- * bought stays shut even for staff. That ordering is deliberate; moving the
- * is_admin check above it would quietly sell the module.
- *
- * Deny by default: every path that is not an explicit grant returns false.
+ * It also answers the two "anywhere" questions the UI asks -- every permission
+ * a user holds, and the modules they should see -- which cross accounts and so
+ * cannot go through Spatie's one-team-at-a-time relation.
  */
-class PermissionResolver
+class PermissionCatalog
 {
     private const CACHE_TTL = 300;
 
     /** Permission name => module key, memoised for the request. */
     private ?array $catalog = null;
 
-    public function __construct(private TenantContext $tenant) {}
-
     /**
-     * @param  string  $permission  e.g. 'roster.publish'
-     * @param  int|null  $accountId  the account being acted on
-     * @param  int|null  $locationId  the location being acted on
+     * Is this permission's module live -- and, when an account is in scope,
+     * enabled for it? An unknown permission, or one whose module has been
+     * switched off product-wide, is denied outright.
      */
-    public function allows(User $user, string $permission, ?int $accountId = null, ?int $locationId = null): bool
+    public function moduleAllows(string $permission, ?int $accountId): bool
     {
-        $accountId ??= $this->tenant->id();
-
-        // An unknown permission, or one whose module has been switched off
-        // product-wide, is denied outright -- including to a super admin.
         $moduleKey = $this->catalog()[$permission] ?? null;
 
         if ($moduleKey === null) {
             return false;
         }
 
-        if ($accountId !== null && ! $this->moduleEnabled($moduleKey, $accountId)) {
-            return false;
-        }
-
-        if ($user->is_admin) {
-            return true;
-        }
-
-        // Everything below this line is account-scoped. No account, no grant.
-        if ($accountId === null) {
-            return false;
-        }
-
-        return $this->withTeam($accountId, fn () => $user->scopedRoles($locationId)
-            ->contains(fn (Role $role) => $role->hasPermissionTo($permission)));
-    }
-
-    /**
-     * Spatie keeps the active team in static state on the registrar, so a check
-     * against one account would otherwise leak into the next. Set it, run, and
-     * put back whatever was there -- including null.
-     */
-    private function withTeam(int $accountId, Closure $callback): mixed
-    {
-        $registrar = app(PermissionRegistrar::class);
-        $previous = getPermissionsTeamId();
-
-        $registrar->setPermissionsTeamId($accountId);
-
-        try {
-            return $callback();
-        } finally {
-            $registrar->setPermissionsTeamId($previous);
-        }
+        return $accountId === null || $this->moduleEnabled($moduleKey, $accountId);
     }
 
     public function moduleEnabled(string $moduleKey, int $accountId): bool
@@ -192,17 +140,6 @@ class PermissionResolver
                 ->where('m.is_active', true)
                 ->pluck('m.key', 'p.name')
                 ->all());
-    }
-
-    /**
-     * Kept because grant and revoke call it. There is nothing per-user left to
-     * flush: scopedRoles() queries live on every check, precisely so a stale
-     * cache can never hand someone access they no longer hold. Spatie's own
-     * cache covers role -> permission and invalidates itself on change.
-     */
-    public function flush(int $userId): void
-    {
-        // Intentionally empty. See the docblock before adding a cache here.
     }
 
     /** Call after toggling a module for an account. */

@@ -116,6 +116,14 @@ return [
     /*
      * When set to true, the method for checking permissions will be registered on the gate.
      * Set this to false if you want to implement custom logic for checking permissions.
+     *
+     * TRUE: $user->can() / @can / Gate are answered by Spatie. That is only safe
+     * because Spatie's hook calls User::hasPermissionTo(), which this app
+     * overrides to add module enablement and the super-admin flag, and reads
+     * User::roles(), overridden to drop other locations and revoked or expired
+     * grants. Remove either override and this hook grants too much. Guarded by
+     * tests/Feature/RbacTest.php. See
+     * docs/spikes/2026-09-23-spatie-permission-scope-model.md.
      */
 
     'register_permission_check_method' => true,

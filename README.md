@@ -36,8 +36,9 @@ live permission checker.
 1. **Deny by default.** A permission is granted only if an active assignment
    carries it, its scope covers the target, and the module is enabled for that
    account.
-2. **Module enablement is enforced in the resolver**, not just hidden in the
-   UI. A disabled module denies even a System Administrator.
+2. **Module enablement is enforced in the permission check**
+   (`User::hasPermissionTo`), not just hidden in the UI. A disabled module
+   denies even a System Administrator.
 3. **Grants are revoked, never deleted.** `revoked_at` keeps the history, and
    the generated `active_guard` column drops revoked rows out of the unique
    index so a role can be granted again later.
@@ -100,7 +101,8 @@ app/Domain/
   Rbac/            ◀ built — this module
     Models/        Module, Permission, Role, UserRoleAssignment
     Actions/       GrantRole, RevokeRole
-    Services/      PermissionResolver   ← the authority for every check
+    Services/      PermissionCatalog    ← module enablement + "anywhere" lists
+    Support/       PermissionScope      ← account (Spatie team) + location in scope
     Policies/      (record-level rules land here)
   Identity/        ◀ built — the tables RBAC attaches to
     Models/        User, Account, Location
@@ -124,17 +126,30 @@ Controllers live outside the domain in `app/Http/Controllers/` and stay thin:
 validate, call one action, serialise. An action can also be called by a job,
 a scheduler or a seeder — a controller cannot.
 
-Other modules never read the RBAC tables. They ask:
+Other modules never read the RBAC tables. They use spatie/laravel-permission's
+own API, which answers for the account and location the `tenant` middleware put
+in scope:
 
 ```php
-$user->hasPermission('roster.publish', $accountId);
+$user->can('roster.publish');                       // or @can, or hasPermissionTo()
+Route::middleware('permission:roster.publish');     // Spatie's middleware
+
+// A different scope than the request's:
+$user->hasPermission('roster.publish', $accountId, $locationId);
 ```
+
+`User::roles()` and `User::hasPermissionTo()` override Spatie's to add location,
+revocation, expiry, module enablement and the super-admin flag -- that is what
+makes the package's API safe here. Never call `assignRole` / `removeRole` /
+`syncRoles`; grants go through `GrantRole` / `RevokeRole`.
 
 ## Key files
 
 | Path | What |
 | --- | --- |
-| `app/Domain/Rbac/Services/PermissionResolver.php` | The authority. Every check goes here. |
+| `app/Domain/Identity/Models/User.php` | `roles()` / `hasPermissionTo()` overrides -- the scope rules on Spatie's check. |
+| `app/Domain/Rbac/Support/PermissionScope.php` | Account + location every check answers for. |
+| `app/Domain/Rbac/Services/PermissionCatalog.php` | Module enablement; cross-account permission and module lists. |
 | `app/Domain/Rbac/Actions/GrantRole.php` | Validates scope and duplicates before writing. |
 | `app/Domain/Rbac/Actions/RevokeRole.php` | Revokes without deleting. |
 | `database/migrations/*_create_rbac_tables.php` | Schema, constraints, generated columns. |

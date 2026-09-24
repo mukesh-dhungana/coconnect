@@ -8,7 +8,7 @@ use App\Domain\Rbac\Actions\RevokeRole;
 use App\Domain\Rbac\Contracts\RoleRepository;
 use App\Domain\Rbac\Data\GrantRoleData;
 use App\Domain\Rbac\Models\UserRoleAssignment;
-use App\Domain\Rbac\Services\PermissionResolver;
+use App\Domain\Rbac\Services\PermissionCatalog;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckPermissionRequest;
 use App\Http\Requests\GrantRoleRequest;
@@ -23,7 +23,7 @@ class AssignmentController extends Controller
     public function __construct(
         private GrantRole $grant,
         private RevokeRole $revoke,
-        private PermissionResolver $resolver,
+        private PermissionCatalog $catalog,
         private RoleRepository $roles,
     ) {}
 
@@ -48,7 +48,7 @@ class AssignmentController extends Controller
         return $this->ok([
             'user'        => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
             'assignments' => $assignments,
-            'permissions' => $this->resolver->permissionNames($user),
+            'permissions' => $this->catalog->permissionNames($user),
         ]);
     }
 
@@ -64,8 +64,20 @@ class AssignmentController extends Controller
         return $this->created($assignment);
     }
 
+    /**
+     * The route's permission check answers for the account the request
+     * resolved, which a DELETE by id does not tie to the assignment. Ask again
+     * for the assignment's own account, or an account-level grant could
+     * revoke access in an account it does not cover.
+     */
     public function destroy(Request $request, UserRoleAssignment $assignment): JsonResponse
     {
+        abort_unless(
+            $request->user()->hasPermission('system.user_manage', $assignment->account_id),
+            403,
+            'You cannot manage access in that account.',
+        );
+
         return $this->ok(($this->revoke)($assignment, $request->user()));
     }
 
@@ -79,8 +91,7 @@ class AssignmentController extends Controller
             'permission'  => $data['permission'],
             'account_id'  => $data['account_id'] ?? null,
             'location_id' => $data['location_id'] ?? null,
-            'allowed'     => $this->resolver->allows(
-                $user,
+            'allowed'     => $user->hasPermission(
                 $data['permission'],
                 $data['account_id'] ?? null,
                 $data['location_id'] ?? null,

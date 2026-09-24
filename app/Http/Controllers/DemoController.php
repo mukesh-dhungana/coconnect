@@ -6,12 +6,12 @@ use App\Domain\Identity\Models\Account;
 use App\Domain\Rbac\Models\Module;
 use App\Domain\Rbac\Models\Role;
 use App\Domain\Identity\Models\User;
-use App\Domain\Rbac\Services\PermissionResolver;
+use App\Domain\Rbac\Services\PermissionCatalog;
 use Illuminate\Http\Request;
 
 class DemoController extends Controller
 {
-    public function __construct(private PermissionResolver $resolver) {}
+    public function __construct(private PermissionCatalog $catalog) {}
 
     public function index(Request $request)
     {
@@ -43,8 +43,8 @@ class DemoController extends Controller
                 'user'        => $u,
                 'assignments' => $u->roleAssignments->sortByDesc('created_at'),
                 'roleCount'   => $active->count(),
-                'permCount'   => count($this->resolver->permissionNames($u)),
-                'modules'     => $this->resolver->visibleModules($u, $account->id),
+                'permCount'   => count($this->catalog->permissionNames($u)),
+                'modules'     => $this->catalog->visibleModules($u, $account->id),
             ];
         });
 
@@ -71,8 +71,7 @@ class DemoController extends Controller
         $user = User::findOrFail($data['user_id']);
 
         return response()->json([
-            'allowed' => $this->resolver->allows(
-                $user,
+            'allowed' => $user->hasPermission(
                 $data['permission'],
                 $data['account_id'] ?: null,
                 $data['location_id'] ?: null,

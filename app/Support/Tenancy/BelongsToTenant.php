@@ -19,7 +19,7 @@ use Illuminate\Database\Eloquent\Model;
  *   Role                 — account_id is nullable, and a NULL means "system
  *                          role, shared by every account". A tenant scope
  *                          would hide exactly the roles everyone needs.
- *   UserRoleAssignment   — the resolver has to see all of a person's grants
+ *   UserRoleAssignment   — permission lookups have to see all of a person's grants
  *                          across every account to answer a question about
  *                          one of them.
  *   Account              — it is the tenant, not a tenant's property.

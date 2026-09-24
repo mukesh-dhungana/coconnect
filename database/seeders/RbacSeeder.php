@@ -12,12 +12,14 @@ use App\Domain\Rbac\Models\UserRoleAssignment;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * Seeds the demo with the shape of the real Co Connect App data:
- * the same 7 modules, 26 permissions, 11 roles and role->permission grants
- * taken from the client dump, plus accounts, locations and users to show
- * scoping and multi-role behaviour.
+ * the same 7 modules, permissions, roles and role->permission grants taken
+ * from the client dump, plus accounts, locations and users to show scoping
+ * and multi-role behaviour. system.user_manage is not in the dump: it keeps
+ * adding personnel separate from integration configuration.
  */
 class RbacSeeder extends Seeder
 {
@@ -87,6 +89,7 @@ class RbacSeeder extends Seeder
 
             'system.audit_view' => ['system', 'View the immutable audit ledger', false],
             'system.integration_manage' => ['system', 'Configure Serko, Gallagher, and Alcolizer API connections', true],
+            'system.user_manage' => ['system', 'Add personnel (manually or by bulk import) and manage their role assignments', true],
         ];
 
         $out = [];
@@ -164,6 +167,9 @@ class RbacSeeder extends Seeder
             $role->permissions()->sync(collect($perms)->map(fn ($p) => $permissions[$p]->id)->all());
             $out[$name] = $role;
         }
+
+        // sync() writes the pivot directly, which Spatie's cache never sees.
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         return $out;
     }

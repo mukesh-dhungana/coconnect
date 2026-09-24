@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Domain\Identity\Models\Account;
+use App\Domain\Rbac\Support\PermissionScope;
 use App\Support\Http\ApiResponse;
 use App\Support\Tenancy\TenantContext;
 use Closure;
@@ -19,17 +20,28 @@ use Symfony\Component\HttpFoundation\Response;
  *   3. the caller's only account, when they have exactly one
  *
  * A super administrator sees every account; anyone else must hold a grant in
- * the one they asked for. Resolution and authorisation live together on purpose —
+ * the one they asked for.
+ *
+ * It also sets the PermissionScope -- Spatie's team plus the location -- that
+ * every later check in the request answers for, so $user->can() and Spatie's
+ * permission: middleware need no arguments. Location comes from a {location}
+ * route parameter, ?location_id= or X-Location-Id. It is not validated
+ * against the account here: a location from elsewhere matches no location
+ * grant (GrantRole refuses those), so it can only narrow, never widen. Resolution and authorisation live together on purpose —
  * setting the tenant without checking access would be worse than not scoping
  * at all, because it would look safe.
  */
 class ResolveTenant
 {
-    public function __construct(private TenantContext $tenant) {}
+    public function __construct(private TenantContext $tenant, private PermissionScope $scope) {}
 
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
+
+        // Spatie's team is static state and outlives the request under Octane
+        // or in tests. Start every request from nothing.
+        $this->scope->set(null);
 
         if (! $user) {
             return $next($request);   // auth middleware will deal with it
@@ -52,6 +64,7 @@ class ResolveTenant
         }
 
         $this->tenant->set($account);
+        $this->scope->set($account->id, $this->requestedLocationId($request));
 
         return $next($request);
     }
@@ -73,6 +86,19 @@ class ResolveTenant
         $own = $this->accountIds($user);
 
         return count($own) === 1 ? $own[0] : null;
+    }
+
+    private function requestedLocationId(Request $request): ?int
+    {
+        $param = $request->route('location');
+
+        if ($param) {
+            return (int) (is_object($param) ? $param->id : $param);
+        }
+
+        $explicit = $request->integer('location_id') ?: $request->header('X-Location-Id');
+
+        return $explicit ? (int) $explicit : null;
     }
 
     /** Accounts the caller holds any active grant in. */
