@@ -46,4 +46,11 @@ return [
     | distinguishable from ones an administrator made deliberately.
     */
     'backfill_reason' => 'migrated_from_legacy',
+
+    /*
+    | The longest a temporary grant (one with valid_until) may run, in days.
+    | GrantRole refuses a longer one, and also refuses one without a reason.
+    | Not set by the client yet; 90 days covers leave cover and short projects.
+    */
+    'temporary_grant_max_days' => (int) env('RBAC_TEMPORARY_GRANT_MAX_DAYS', 90),
 ];

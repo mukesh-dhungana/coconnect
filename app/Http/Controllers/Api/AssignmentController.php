@@ -6,6 +6,7 @@ use App\Domain\Identity\Models\User;
 use App\Domain\Rbac\Actions\GrantRole;
 use App\Domain\Rbac\Actions\RevokeRole;
 use App\Domain\Rbac\Contracts\RoleRepository;
+use App\Domain\Rbac\Contracts\UserDirectory;
 use App\Domain\Rbac\Data\GrantRoleData;
 use App\Domain\Rbac\Models\UserRoleAssignment;
 use App\Domain\Rbac\Services\PermissionCatalog;
@@ -13,6 +14,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckPermissionRequest;
 use App\Http\Requests\GrantRoleRequest;
 use App\Support\Concerns\RespondsWithJson;
+use App\Support\Tenancy\TenantContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -25,12 +27,21 @@ class AssignmentController extends Controller
         private RevokeRole $revoke,
         private PermissionCatalog $catalog,
         private RoleRepository $roles,
+        private UserDirectory $users,
+        private TenantContext $tenant,
     ) {}
 
-    /** Every role a user holds, active or not. */
-    public function index(User $user): JsonResponse
+    /**
+     * Every role a user holds, active or not. An account administrator sees
+     * only this account's, and only for someone in this account.
+     */
+    public function index(Request $request, User $user): JsonResponse
     {
+        $this->ensureVisible($request, $user);
+        $only = $request->user()->is_admin ? null : $this->tenant->id();
+
         $assignments = $user->roleAssignments()
+            ->when($only !== null, fn ($q) => $q->where('account_id', $only))
             ->with(['role:id,name,scope_level', 'account:id,name', 'location:id,name', 'grantedBy:id,first_name,last_name'])
             ->orderByDesc('created_at')
             ->get()
@@ -48,12 +59,20 @@ class AssignmentController extends Controller
         return $this->ok([
             'user'        => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
             'assignments' => $assignments,
-            'permissions' => $this->catalog->permissionNames($user),
+            'permissions' => $this->catalog->permissionNames($user, $only),
         ]);
     }
 
+    /**
+     * The grant's account is the request's (`tenant` resolves it from
+     * account_id), so an account administrator can only grant in their own
+     * account -- and only to someone already in it. Bringing a person in from
+     * another account is a super administrator's call.
+     */
     public function store(GrantRoleRequest $request, User $user): JsonResponse
     {
+        $this->ensureVisible($request, $user);
+
         $assignment = ($this->grant)(GrantRoleData::fromRequest(
             user: $user,
             role: $this->roles->findOrFail((int) $request->validated('role_id')),
@@ -84,6 +103,8 @@ class AssignmentController extends Controller
     /** The question the whole module exists to answer. */
     public function check(CheckPermissionRequest $request, User $user): JsonResponse
     {
+        $this->ensureVisible($request, $user);
+
         $data = $request->validated();
 
         return $this->ok([
@@ -97,5 +118,11 @@ class AssignmentController extends Controller
                 $data['location_id'] ?? null,
             ),
         ]);
+    }
+
+    /** Someone outside the caller's account is a 404: not even their existence leaks. */
+    private function ensureVisible(Request $request, User $user): void
+    {
+        abort_unless($this->users->visibleTo($request->user(), $user, $this->tenant->id()), 404);
     }
 }

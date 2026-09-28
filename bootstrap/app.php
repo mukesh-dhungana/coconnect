@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
     // so they are registered explicitly.
     ->withCommands([
         \App\Domain\Rbac\Console\BackfillLegacyRoles::class,
+        \App\Domain\Rbac\Console\RecordExpiredGrants::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         // Sanctum SPA auth: the React app authenticates with the session

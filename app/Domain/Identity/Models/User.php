@@ -53,6 +53,32 @@ class User extends Authenticatable
             ->where('model_type', static::class);
     }
 
+    /**
+     * People who belong to an account: a live membership, or a grant there
+     * that is not revoked or expired. This is the boundary for everything an
+     * account-level administrator may see or change about a person.
+     */
+    public function scopeInAccount($query, int $accountId)
+    {
+        return $query->where(fn ($q) => $q
+            ->whereHas('accounts', fn ($a) => $a->where('accounts.id', $accountId)
+                ->whereNull('account_user.deleted_at'))
+            ->orWhereHas('roleAssignments', fn ($r) => $r->outstanding()
+                ->where('account_id', $accountId)));
+    }
+
+    /**
+     * Any account this person belongs to other than the given one -- the same
+     * test as scopeInAccount(), inverted.
+     */
+    public function belongsBeyond(int $accountId): bool
+    {
+        return $this->accounts()->where('accounts.id', '!=', $accountId)
+            ->whereNull('account_user.deleted_at')->exists()
+            || $this->roleAssignments()->outstanding()
+                ->where('account_id', '!=', $accountId)->exists();
+    }
+
     public function accounts()
     {
         return $this->belongsToMany(Account::class, 'account_user')

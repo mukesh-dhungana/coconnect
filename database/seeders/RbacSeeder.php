@@ -18,8 +18,9 @@ use Spatie\Permission\PermissionRegistrar;
  * Seeds the demo with the shape of the real Co Connect App data:
  * the same 7 modules, permissions, roles and role->permission grants taken
  * from the client dump, plus accounts, locations and users to show scoping
- * and multi-role behaviour. system.user_manage is not in the dump: it keeps
- * adding personnel separate from integration configuration.
+ * and multi-role behaviour. system.user_manage, system.account_manage and
+ * system.location_manage are not in the dump: they keep personnel, account
+ * and location administration apart from integration configuration.
  */
 class RbacSeeder extends Seeder
 {
@@ -89,6 +90,8 @@ class RbacSeeder extends Seeder
 
             'system.audit_view' => ['system', 'View the immutable audit ledger', false],
             'system.integration_manage' => ['system', 'Configure Serko, Gallagher, and Alcolizer API connections', true],
+            'system.account_manage' => ['system', 'Create, edit and delete client accounts', true],
+            'system.location_manage' => ['system', 'Create, edit and delete locations within an account', true],
             'system.user_manage' => ['system', 'Add personnel (manually or by bulk import) and manage their role assignments', true],
         ];
 
@@ -148,6 +151,13 @@ class RbacSeeder extends Seeder
             ]],
             'Site Worker / Contractor' => ['location', 'site_worker_contractor', [
                 'roster.view', 'travel.view', 'accommodation.view',
+            ]],
+            // Account-level admin: adds and edits people and manages their
+            // roles, only inside the account it is granted in. Accounts,
+            // locations, modules, roles and integrations stay with the super
+            // administrator.
+            'Site Administrator' => ['account', 'site_administrator', [
+                'system.user_manage', 'system.audit_view',
             ]],
             'Auditor / Assurance Reviewer' => ['account', 'auditor_assurance_reviewer', [
                 'roster.view', 'travel.view', 'accommodation.view', 'housekeeping.view',
@@ -241,6 +251,7 @@ class RbacSeeder extends Seeder
         $keira = $make('Keira', 'Novak', 'keira@campconnect.com.au');
         $petr = $make('Petr', 'Emergency', 'petr.emergency@campconnect.com.au');
         $worker = $make('Demo', 'User', 'demo@example.com');
+        $siteAdmin = $make('Sam', 'Admin', 'sam.admin@campconnect.com.au');
 
         $grant = fn (User $u, string $role, $acc, $loc = null, $until = null, $by = null) => UserRoleAssignment::create([
             'model_id' => $u->id,
@@ -257,6 +268,7 @@ class RbacSeeder extends Seeder
         // Account-scoped
         $grant($admin, 'Roster Coordinator', $snazzy, null, null, $erin);
         $grant($trav, 'Travel Coordinator', $snazzy, null, null, $erin);
+        $grant($siteAdmin, 'Site Administrator', $snazzy, null, null, $erin);
 
         // The same person coordinating travel for a SECOND account.
         $grant($trav, 'Travel Coordinator', $rio, null, null, $erin);
@@ -275,7 +287,7 @@ class RbacSeeder extends Seeder
         $grant($worker, 'Site Worker / Contractor', $snazzy, $site, null, $admin);
 
         // Account membership pivots (legacy shape, kept in sync).
-        foreach ([$erin, $admin, $trav, $brad, $keira, $petr, $worker] as $u) {
+        foreach ([$erin, $admin, $trav, $brad, $keira, $petr, $worker, $siteAdmin] as $u) {
             $snazzy->users()->attach($u->id, ['type' => 'employee', 'source' => 'seed', 'created_at' => now(), 'updated_at' => now()]);
         }
         $rio->users()->attach($trav->id, ['type' => 'contractor', 'source' => 'seed', 'created_at' => now(), 'updated_at' => now()]);

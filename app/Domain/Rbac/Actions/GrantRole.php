@@ -8,6 +8,7 @@ use App\Domain\Rbac\Data\GrantRoleData;
 use App\Domain\Rbac\Models\Role;
 use App\Domain\Rbac\Models\UserRoleAssignment;
 use App\Domain\Rbac\Support\RbacAudit;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -35,6 +36,7 @@ class GrantRole
         $this->assertRoleAvailable($role, $accountId);
         $this->assertLocationInAccount($locationId, $accountId);
         $this->assertNotDuplicate($user, $role, $accountId, $locationId);
+        $this->assertTemporaryGrantIsBounded($data);
 
         $assignment = DB::transaction(fn () => UserRoleAssignment::create([
             'model_id' => $user->id,
@@ -115,6 +117,33 @@ class GrantRole
         if (! $inAccount) {
             throw ValidationException::withMessages([
                 'location_id' => 'That location does not belong to the selected account.',
+            ]);
+        }
+    }
+
+    /**
+     * A temporary grant is an elevation, so it must say why and must end.
+     * Without a reason nobody can review it afterwards (PRD section 13:
+     * "time-limited, reasoned and audited"); without a ceiling "temporary"
+     * could mean years. Permanent grants are unaffected.
+     */
+    private function assertTemporaryGrantIsBounded(GrantRoleData $data): void
+    {
+        if ($data->validUntil === null) {
+            return;
+        }
+
+        if (trim((string) $data->reason) === '') {
+            throw ValidationException::withMessages([
+                'reason' => 'A temporary grant needs a reason.',
+            ]);
+        }
+
+        $maxDays = (int) config('rbac.temporary_grant_max_days');
+
+        if (Carbon::parse($data->validUntil)->greaterThan(now()->addDays($maxDays))) {
+            throw ValidationException::withMessages([
+                'valid_until' => "A temporary grant can last at most {$maxDays} days.",
             ]);
         }
     }

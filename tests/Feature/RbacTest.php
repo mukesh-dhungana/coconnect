@@ -12,6 +12,8 @@ use App\Domain\Rbac\Models\Role;
 use App\Domain\Rbac\Models\UserRoleAssignment;
 use App\Domain\Rbac\Services\PermissionCatalog;
 use App\Domain\Rbac\Support\PermissionScope;
+use App\Domain\Rbac\Support\RbacAudit;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
@@ -60,11 +62,11 @@ function roleWith(string $scope, Permission $perm, ?string $key = null): Role
 
 /** Builds the DTO so the call sites stay short. */
 function grant(User $user, Role $role, ?int $accountId = null, ?int $locationId = null,
-    ?string $validUntil = null): UserRoleAssignment
+    ?string $validUntil = null, ?string $reason = null): UserRoleAssignment
 {
     return app(GrantRole::class)(new GrantRoleData(
         user: $user, role: $role, accountId: $accountId,
-        locationId: $locationId, validUntil: $validUntil,
+        locationId: $locationId, reason: $reason, validUntil: $validUntil,
     ));
 }
 
@@ -202,13 +204,52 @@ it('drops a temporary grant once it expires', function () {
     $user = makeUser('Temp Elevated');
 
     grant($user, roleWith('location', $perm), $account->id, $loc->id,
-        validUntil: now()->addHour()->toDateTimeString());
+        validUntil: now()->addHour()->toDateTimeString(), reason: 'covering the night shift');
     expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue();
 
     $this->travel(2)->hours();
 
     // No cache to flush: grants are read live precisely so this cannot go stale.
     expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeFalse();
+});
+
+it('refuses a temporary grant without a reason', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    $user = makeUser('No Reason');
+    $role = roleWith('location', $perm);
+    $until = now()->addHour()->toDateTimeString();
+
+    expect(fn () => grant($user, $role, $account->id, $loc->id, validUntil: $until))
+        ->toThrow(ValidationException::class, 'A temporary grant needs a reason.')
+        ->and(fn () => grant($user, $role, $account->id, $loc->id, validUntil: $until, reason: '   '))
+        ->toThrow(ValidationException::class, 'A temporary grant needs a reason.')
+        ->and(UserRoleAssignment::count())->toBe(0);
+});
+
+it('refuses a temporary grant longer than the configured maximum', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    $user = makeUser('Too Long');
+    $role = roleWith('location', $perm);
+    config(['rbac.temporary_grant_max_days' => 30]);
+
+    expect(fn () => grant($user, $role, $account->id, $loc->id,
+        validUntil: now()->addDays(31)->toDateTimeString(), reason: 'project cover'))
+        ->toThrow(ValidationException::class, 'A temporary grant can last at most 30 days.')
+        ->and(UserRoleAssignment::count())->toBe(0);
+
+    grant($user, $role, $account->id, $loc->id,
+        validUntil: now()->addDays(30)->toDateTimeString(), reason: 'project cover');
+
+    expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue();
+});
+
+it('still allows a permanent grant without a reason', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    $user = makeUser('Permanent Grant');
+
+    grant($user, roleWith('location', $perm), $account->id, $loc->id);
+
+    expect($user->hasPermission('roster.publish', $account->id, $loc->id))->toBeTrue();
 });
 
 it('revokes without deleting, and allows a later re-grant', function () {
@@ -357,7 +398,7 @@ it('denies can() once the grant is revoked, on the same model instance', functio
 it('denies can() once a temporary grant expires', function () {
     ['perm' => $perm, 'account' => $account] = scenario();
     $user = makeUser('Gate Expiry');
-    grant($user, roleWith('account', $perm), $account->id, validUntil: now()->addHour()->toDateTimeString());
+    grant($user, roleWith('account', $perm), $account->id, validUntil: now()->addHour()->toDateTimeString(), reason: 'covering leave');
     app(PermissionScope::class)->set($account->id);
 
     expect($user->can('roster.publish'))->toBeTrue();
@@ -451,4 +492,66 @@ it('never calls Spatie methods that would bypass scope or delete the audit trail
     }
 
     expect($offenders)->toBe([]);
+});
+
+// ---------------------------------------------------------------------------
+// Expiry audit: rbac:record-expiries
+// ---------------------------------------------------------------------------
+
+it('records one role.expired entry per expired grant, dated at valid_until', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    $user = makeUser('Temp Cover');
+    $until = now()->addHour()->startOfSecond();
+
+    $assignment = grant($user, roleWith('location', $perm), $account->id, $loc->id,
+        validUntil: $until->toDateTimeString(), reason: 'night cover');
+
+    $this->artisan('rbac:record-expiries')->assertSuccessful();
+    expect(RbacAudit::query()->where('event', 'role.expired')->count())->toBe(0);   // not expired yet
+
+    $this->travel(2)->hours();
+    $this->artisan('rbac:record-expiries')->assertSuccessful();
+    $this->artisan('rbac:record-expiries')->assertSuccessful();   // a second run adds nothing
+
+    $entries = RbacAudit::query()->where('event', 'role.expired')->get();
+
+    expect($entries)->toHaveCount(1)
+        ->and($entries[0]->subject_id)->toBe($assignment->id)
+        ->and($entries[0]->causer_id)->toBeNull()
+        ->and($entries[0]->properties['account_id'])->toBe($account->id)
+        ->and($entries[0]->properties['reason'])->toBe('night cover')
+        ->and($entries[0]->created_at->equalTo($until))->toBeTrue()
+        ->and($assignment->fresh()->expiry_recorded_at)->not->toBeNull();
+});
+
+it('does not record an expiry for a grant revoked before it ran out', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    $user = makeUser('Revoked Early');
+
+    $assignment = grant($user, roleWith('location', $perm), $account->id, $loc->id,
+        validUntil: now()->addHour()->toDateTimeString(), reason: 'short cover');
+    app(RevokeRole::class)($assignment);
+
+    $this->travel(2)->hours();
+    $this->artisan('rbac:record-expiries')->assertSuccessful();
+
+    expect(RbacAudit::query()->where('event', 'role.expired')->exists())->toBeFalse();
+});
+
+it('ignores permanent grants', function () {
+    ['perm' => $perm, 'account' => $account, 'location' => $loc] = scenario();
+    grant(makeUser('Permanent Holder'), roleWith('location', $perm), $account->id, $loc->id);
+
+    $this->travel(1)->years();
+    $this->artisan('rbac:record-expiries')->assertSuccessful();
+
+    expect(RbacAudit::query()->where('event', 'role.expired')->exists())->toBeFalse();
+});
+
+it('schedules rbac:record-expiries every five minutes', function () {
+    $event = collect(app(Schedule::class)->events())
+        ->first(fn ($e) => str_contains($e->command ?? '', 'rbac:record-expiries'));
+
+    expect($event)->not->toBeNull()
+        ->and($event->expression)->toBe('*/5 * * * *');
 });

@@ -25,7 +25,7 @@ class UserRoleAssignment extends Model
     protected $fillable = [
         'model_id', 'model_type', 'role_id', 'scope_level', 'account_id', 'location_id',
         'granted_by', 'grant_reason', 'valid_from', 'valid_until',
-        'revoked_at', 'revoked_by',
+        'revoked_at', 'revoked_by', 'expiry_recorded_at',
     ];
 
     public function __construct(array $attributes = [])
@@ -41,6 +41,7 @@ class UserRoleAssignment extends Model
             'valid_from' => 'datetime',
             'valid_until' => 'datetime',
             'revoked_at' => 'datetime',
+            'expiry_recorded_at' => 'datetime',
         ];
     }
 
@@ -80,6 +81,17 @@ class UserRoleAssignment extends Model
         return $query->whereNull('revoked_at')
             ->where(fn ($q) => $q->whereNull('valid_from')->orWhere('valid_from', '<=', $now))
             ->where(fn ($q) => $q->whereNull('valid_until')->orWhere('valid_until', '>', $now));
+    }
+
+    /**
+     * Not revoked and not expired -- including grants that have not started
+     * yet. What must be dealt with before the account or location they point
+     * at can go.
+     */
+    public function scopeOutstanding($query)
+    {
+        return $query->whereNull('revoked_at')
+            ->where(fn ($q) => $q->whereNull('valid_until')->orWhere('valid_until', '>', now()));
     }
 
     public function getIsActiveAttribute(): bool

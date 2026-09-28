@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Controllers\Api\AccountController;
 use App\Http\Controllers\Api\AssignmentController;
 use App\Http\Controllers\Api\AuditController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\LocationController;
 use App\Http\Controllers\Api\ModuleController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\UserController;
@@ -31,8 +33,13 @@ Route::prefix('v1')->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
         Route::get('me', [AuthController::class, 'me']);
 
-        // Reference data any signed-in admin screen needs
-        Route::get('accounts', [UserController::class, 'accounts']);
+        // Reference data any signed-in admin screen needs. accounts lists only
+        // the caller's own; the {account} reads are refused by `tenant` for
+        // an account the caller holds no grant in.
+        Route::get('accounts', [AccountController::class, 'index']);
+        Route::get('accounts/{account}', [AccountController::class, 'show']);
+        Route::get('accounts/{account}/locations', [LocationController::class, 'index']);
+        Route::get('accounts/{account}/locations/{location}', [LocationController::class, 'show'])->scopeBindings();
         Route::get('permissions', [UserController::class, 'permissions']);
 
         // Reading the model requires the audit-view permission, which every
@@ -57,10 +64,28 @@ Route::prefix('v1')->group(function () {
             Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
         });
 
-        // Adding personnel and managing their roles. Answered for the account
-        // `tenant` put in scope; operational roles never carry it.
+        // Accounts and locations. Platform administration: no role carries
+        // either permission, so in practice super administrators only.
+        // Scoped bindings make a location from another account a 404.
+        Route::middleware('permission:system.account_manage')->group(function () {
+            Route::post('accounts', [AccountController::class, 'store']);
+            Route::put('accounts/{account}', [AccountController::class, 'update']);
+            Route::delete('accounts/{account}', [AccountController::class, 'destroy']);
+        });
+
+        Route::middleware('permission:system.location_manage')->scopeBindings()->group(function () {
+            Route::post('accounts/{account}/locations', [LocationController::class, 'store']);
+            Route::put('accounts/{account}/locations/{location}', [LocationController::class, 'update']);
+            Route::delete('accounts/{account}/locations/{location}', [LocationController::class, 'destroy']);
+        });
+
+        // Adding and editing personnel and managing their roles. A super
+        // administrator holds this everywhere; a Site Administrator only in
+        // their own account -- `tenant` puts that account in scope, and the
+        // controllers refuse anyone outside it. Operational roles never carry it.
         Route::middleware('permission:system.user_manage')->group(function () {
             Route::post('users', [UserController::class, 'store']);
+            Route::put('users/{user}', [UserController::class, 'update']);
             Route::post('users/{user}/assignments', [AssignmentController::class, 'store']);
             Route::delete('assignments/{assignment}', [AssignmentController::class, 'destroy']);
         });

@@ -111,6 +111,7 @@ it('records an audit entry when a role is granted and revoked', function () {
     ['account' => $account, 'admin' => $admin, 'worker' => $worker] = rbacWorld();
     $actor = makePerson('actor@example.com');
     $target = makePerson('target@example.com');
+    $account->users()->attach($target->id);   // grants go to people already in the account
 
     UserRoleAssignment::create([
         'model_id' => $actor->id, 'model_type' => $actor::class, 'role_id' => $admin->id,
@@ -132,6 +133,26 @@ it('records an audit entry when a role is granted and revoked', function () {
     $this->actingAs($actor)->deleteJson("/api/v1/assignments/{$assignment->id}")->assertOk();
 
     expect(RbacAudit::query()->where('event', 'role.revoked')->exists())->toBeTrue();
+});
+
+it('answers 422 for a temporary grant without a reason', function () {
+    ['account' => $account, 'admin' => $admin, 'worker' => $worker] = rbacWorld();
+    $actor = makePerson('actor@example.com');
+    $target = makePerson('target@example.com');
+    $account->users()->attach($target->id);
+
+    UserRoleAssignment::create([
+        'model_id' => $actor->id, 'model_type' => $actor::class, 'role_id' => $admin->id,
+        'scope_level' => 'account', 'account_id' => $account->id, 'valid_from' => now(),
+    ]);
+
+    $this->actingAs($actor)
+        ->postJson("/api/v1/users/{$target->id}/assignments", [
+            'role_id' => $worker->id, 'account_id' => $account->id,
+            'valid_until' => now()->addDay()->toIso8601String(),
+        ])->assertStatus(422)->assertJsonValidationErrors('reason');
+
+    expect(UserRoleAssignment::where('model_id', $target->id)->exists())->toBeFalse();
 });
 
 it('records an audit entry when a module is toggled', function () {
@@ -287,6 +308,7 @@ it("grants roles in the caller's own account but not another's", function () {
     $actor = makePerson('account.admin@example.com');
     holds($actor, $admin, $account);
     $target = makePerson('target@example.com');
+    $account->users()->attach($target->id);
 
     $this->actingAs($actor)->postJson("/api/v1/users/{$target->id}/assignments", [
         'role_id' => $worker->id, 'account_id' => $account->id,

@@ -59,14 +59,19 @@ class PermissionCatalog
         );
     }
 
-    /** Distinct permission names the user holds anywhere -- for UI hints only. */
-    public function permissionNames(User $user): array
+    /**
+     * Distinct permission names the user holds -- anywhere, or in one account
+     * when an account-level administrator is asking. For UI hints only.
+     */
+    public function permissionNames(User $user, ?int $accountId = null): array
     {
         if ($user->is_admin) {
             return array_keys($this->catalog());
         }
 
-        return $this->grantedPermissions($user)->pluck('permission')
+        return $this->grantedPermissions($user)
+            ->when($accountId !== null, fn ($rows) => $rows->where('account_id', $accountId))
+            ->pluck('permission')
             ->unique()->sort()->values()->all();
     }
 

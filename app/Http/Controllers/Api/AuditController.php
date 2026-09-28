@@ -6,13 +6,23 @@ use App\Domain\Rbac\Support\RbacAudit;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AuditQueryRequest;
 use App\Support\Concerns\RespondsWithJson;
+use App\Support\Tenancy\TenantContext;
 use Illuminate\Http\JsonResponse;
 
 class AuditController extends Controller
 {
     use RespondsWithJson;
 
-    /** The access-control ledger: who changed what, when, and why. */
+    public function __construct(private TenantContext $tenant) {}
+
+    /**
+     * The access-control ledger: who changed what, when, and why.
+     *
+     * A super administrator reads all of it, optionally filtered to one
+     * account. Anyone else reads only the account the request acts in -- the
+     * ledger names people, so an unfiltered read would list another client's
+     * users.
+     */
     public function index(AuditQueryRequest $request): JsonResponse
     {
         $data  = $request->validated();
@@ -22,8 +32,12 @@ class AuditController extends Controller
             $query->where('event', $data['event']);
         }
 
-        if (! empty($data['account_id'])) {
-            $query->where('properties->account_id', (int) $data['account_id']);
+        $accountId = $request->user()->is_admin
+            ? ($data['account_id'] ?? null)
+            : $this->tenant->id();
+
+        if (! empty($accountId)) {
+            $query->where('properties->account_id', (int) $accountId);
         }
 
         $page = $query->paginate($data['per_page'] ?? 25);

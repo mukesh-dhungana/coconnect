@@ -20,6 +20,37 @@ class EloquentUserDirectory implements UserDirectory
         ])->orderBy('first_name')->get();
     }
 
+    public function inAccount(int $accountId): Collection
+    {
+        $here = fn ($q) => $q->where('account_id', $accountId);
+
+        return User::inAccount($accountId)->with([
+            'roleAssignments' => $here,
+            'roleAssignments.role:id,name,scope_level',
+            'roleAssignments.account:id,name',
+            'roleAssignments.location:id,name',
+        ])->orderBy('first_name')->get();
+    }
+
+    public function visibleTo(User $viewer, User $person, ?int $accountId): bool
+    {
+        if ($viewer->is_admin) {
+            return true;
+        }
+
+        return $accountId !== null
+            && User::inAccount($accountId)->whereKey($person->id)->exists();
+    }
+
+    public function update(User $user, array $attributes): array
+    {
+        $user->fill($attributes);
+        $changes = array_keys($user->getDirty());
+        $user->save();
+
+        return $changes;
+    }
+
     public function create(NewUserData $data): User
     {
         $user = User::create([
