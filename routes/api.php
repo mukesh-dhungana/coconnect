@@ -37,7 +37,8 @@ Route::prefix('v1')->group(function () {
         // the caller's own; the {account} reads are refused by `tenant` for
         // an account the caller holds no grant in.
         Route::get('accounts', [AccountController::class, 'index']);
-        Route::get('accounts/{account}', [AccountController::class, 'show']);
+        // Numeric only, so accounts/archived below is not read as an account id.
+        Route::get('accounts/{account}', [AccountController::class, 'show'])->whereNumber('account');
         Route::get('accounts/{account}/locations', [LocationController::class, 'index']);
         Route::get('accounts/{account}/locations/{location}', [LocationController::class, 'show'])->scopeBindings();
         Route::get('permissions', [UserController::class, 'permissions']);
@@ -67,10 +68,15 @@ Route::prefix('v1')->group(function () {
         // Accounts and locations. Platform administration: no role carries
         // either permission, so in practice super administrators only.
         // Scoped bindings make a location from another account a 404.
+        // DELETE archives (soft-deletes); archived accounts are listed and
+        // restored here. {archived} is not {account} on purpose: `tenant`
+        // resolves {account} and would 404 an archived one.
         Route::middleware('permission:system.account_manage')->group(function () {
+            Route::get('accounts/archived', [AccountController::class, 'archived']);
             Route::post('accounts', [AccountController::class, 'store']);
             Route::put('accounts/{account}', [AccountController::class, 'update']);
             Route::delete('accounts/{account}', [AccountController::class, 'destroy']);
+            Route::post('accounts/{archived}/restore', [AccountController::class, 'restore'])->whereNumber('archived');
         });
 
         Route::middleware('permission:system.location_manage')->scopeBindings()->group(function () {

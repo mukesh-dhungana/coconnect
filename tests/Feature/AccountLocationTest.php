@@ -178,6 +178,76 @@ it('deletes an account only once it has no locations and no grants', function ()
         ->and(RbacAudit::query()->where('event', 'account.deleted')->exists())->toBeTrue();
 });
 
+// ---- Archive and restore ---------------------------------------------------
+
+it('lists archived accounts to a super administrator and keeps them out of the live list', function () {
+    ['rio' => $rio, 'camp' => $camp] = tenantWorld();
+    $root = tenantPerson('root@example.com', superAdmin: true);
+    $camp->delete();
+
+    $this->actingAs($root)->deleteJson("/api/v1/accounts/{$rio->id}")->assertSuccessful();
+
+    $this->actingAs($root)->getJson('/api/v1/accounts')
+        ->assertOk()->assertJsonMissing(['name' => 'Rio']);
+
+    $this->actingAs($root)->getJson('/api/v1/accounts/archived')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $rio->id)
+        ->assertJsonPath('data.0.locations', []);
+
+    expect($this->actingAs($root)->getJson('/api/v1/accounts/archived')->json('data.0.archived_at'))->not->toBeNull();
+});
+
+it('refuses the archived list and restore to anyone but a super administrator', function () {
+    ['acme' => $acme, 'rio' => $rio, 'camp' => $camp, 'admin' => $admin] = tenantWorld();
+    $camp->delete();
+    $rio->delete();
+    $user = tenantPerson('member@example.com');
+    grantIn($user, $admin, $acme);
+
+    $this->actingAs($user)->getJson('/api/v1/accounts/archived')->assertStatus(403);
+    $this->actingAs($user)->postJson("/api/v1/accounts/{$rio->id}/restore")->assertStatus(403);
+
+    expect(Account::find($rio->id))->toBeNull();
+});
+
+it('restores an archived account and records it', function () {
+    ['rio' => $rio, 'camp' => $camp] = tenantWorld();
+    $root = tenantPerson('root@example.com', superAdmin: true);
+    $camp->delete();
+    $rio->delete();
+
+    $this->actingAs($root)->postJson("/api/v1/accounts/{$rio->id}/restore")
+        ->assertOk()
+        ->assertJsonPath('data.name', 'Rio')
+        ->assertJsonPath('data.archived_at', null)
+        ->assertJsonPath('data.locations', []);   // its locations stay archived
+
+    expect(Account::find($rio->id))->not->toBeNull()
+        ->and(RbacAudit::query()->where('event', 'account.restored')
+            ->where('properties->account_id', $rio->id)->exists())->toBeTrue();
+});
+
+it('refuses to restore an account whose slug is now taken', function () {
+    ['rio' => $rio, 'camp' => $camp] = tenantWorld();
+    $root = tenantPerson('root@example.com', superAdmin: true);
+    $camp->delete();
+    $rio->delete();
+    Account::create(['name' => 'Rio Again', 'slug' => 'rio']);
+
+    $this->actingAs($root)->postJson("/api/v1/accounts/{$rio->id}/restore")->assertStatus(422);
+
+    expect(Account::find($rio->id))->toBeNull();
+});
+
+it('answers 404 when restoring an account that is not archived', function () {
+    ['acme' => $acme] = tenantWorld();
+
+    $this->actingAs(tenantPerson('root@example.com', superAdmin: true))
+        ->postJson("/api/v1/accounts/{$acme->id}/restore")->assertStatus(404);
+});
+
 // ---- Locations -------------------------------------------------------------
 
 it('lets a super administrator create, rename and delete a location', function () {

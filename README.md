@@ -82,6 +82,17 @@ GET    /api/v1/users/{user}/check?permission=&account_id=&location_id=
 The demo routes are unauthenticated so they can be exercised directly. In
 production they sit behind `auth:sanctum` plus a `system.*` permission check.
 
+### Interactive docs
+
+Run `php artisan serve` and open <http://localhost:8000/docs/api>. The OpenAPI
+spec is generated from the routes and FormRequests by
+[Scramble](https://scramble.dedoc.co), so it stays in sync without annotations.
+The raw spec is at `/docs/api.json`.
+
+Log in with *Try it* on `POST /v1/login`; later requests reuse the session
+cookie and CSRF token. This needs `localhost:8000` in
+`SANCTUM_STATEFUL_DOMAINS`. The docs are served only when `APP_ENV=local`.
+
 ## Tests
 
 ```bash

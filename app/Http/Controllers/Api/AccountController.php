@@ -44,6 +44,13 @@ class AccountController extends Controller
         return $this->ok($accounts->map(fn (Account $a) => $this->present($a)));
     }
 
+    /** Archived (soft-deleted) accounts, newest first -- platform administration only. */
+    public function archived(): JsonResponse
+    {
+        return $this->ok(Account::onlyTrashed()->latest('deleted_at')->get()
+            ->map(fn (Account $a) => $this->present($a->setRelation('locations', collect()))));
+    }
+
     public function show(Account $account): JsonResponse
     {
         return $this->ok($this->present($account->load('locations:id,account_id,name')));
@@ -118,6 +125,29 @@ class AccountController extends Controller
         return $this->noContent();
     }
 
+    /**
+     * Brings an archived account back. Its locations stay archived -- archiving
+     * required them gone first -- and nobody regains access: every grant was
+     * revoked before the archive, so access is granted again on the record.
+     */
+    public function restore(int $archived): JsonResponse
+    {
+        $account = Account::onlyTrashed()->findOrFail($archived);
+
+        if (Account::where('slug', $account->slug)->exists()) {
+            return $this->failed("Another account now uses the slug \"{$account->slug}\". Change one of them first.", 422);
+        }
+
+        $account->restore();
+
+        RbacAudit::record('account.restored', $account, [
+            'account' => $account->name,
+            'account_id' => $account->id,
+        ]);
+
+        return $this->ok($this->present($account->load('locations:id,account_id,name')));
+    }
+
     private function present(Account $account): array
     {
         return [
@@ -127,6 +157,7 @@ class AccountController extends Controller
             'abn'       => $account->abn,
             'timezone'  => $account->timezone,
             'locale'    => $account->locale,
+            'archived_at' => $account->deleted_at?->toIso8601String(),
             'locations' => $account->locations->map(fn ($l) => ['id' => $l->id, 'name' => $l->name])->values(),
         ];
     }
